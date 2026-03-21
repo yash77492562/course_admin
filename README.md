@@ -1,36 +1,88 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Riva Data Admin Panel
+
+Admin panel for managing Riva Data courses, modules, and content.
+
+## Features
+
+- ✅ Course Management (Create, Read, Update, Delete)
+- ✅ Module Management (Add, Edit, Delete modules within courses)
+- ✅ Course Details View
+- ✅ Responsive Design with Tailwind CSS
+- ✅ Form Validation
+- ✅ Real-time Updates
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
+
+Make sure the backend is running on port 3002:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cd ../backend
+npm run start:dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Installation
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. Install dependencies:
+```bash
+npm install
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+2. Start the development server:
+```bash
+npm run dev
+```
 
-## Learn More
+The admin panel will be available at [http://localhost:3001](http://localhost:3001)
 
-To learn more about Next.js, take a look at the following resources:
+## API Configuration
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+The admin panel connects to the backend API at `http://localhost:3002/api`. You can change this in `.env.local`:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```
+NEXT_PUBLIC_API_URL=http://localhost:3002/api
+```
 
-## Deploy on Vercel
+## Course Management
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### Creating a Course
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. Click "Add New Course" on the dashboard
+2. Fill in all required fields:
+   - Title, Description, Category
+   - Instructor, Duration, Level
+   - Price, Thumbnail URL
+   - Features (comma-separated)
+   - Status (Draft/Published/Archived)
+
+### Managing Modules
+
+1. Click "View" on any course to see its details
+2. Add modules with title, description, duration, and order
+3. Edit or delete existing modules
+4. Modules are automatically ordered by their order number
+
+## Database Schema
+
+The admin panel works with the existing Prisma schema:
+
+- **Course**: Main course entity with all course details
+- **CourseModule**: Modules within a course
+- **Lesson**: Individual lessons within modules (future enhancement)
+
+## Technology Stack
+
+- **Frontend**: Next.js 14, React, TypeScript
+- **Styling**: Tailwind CSS
+- **Backend**: NestJS (existing)
+- **Database**: MongoDB with Prisma (existing)
+
+## Development
+
+The admin panel is built with:
+- Server-side rendering with Next.js
+- Type-safe API calls with TypeScript
+- Responsive design with Tailwind CSS
+- Form validation and error handling
+- Optimistic UI updates

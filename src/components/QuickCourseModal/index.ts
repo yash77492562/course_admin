@@ -1,0 +1,1 @@
+export { QuickCourseModal } from './QuickCourseModal';

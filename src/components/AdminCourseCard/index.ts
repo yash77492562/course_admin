@@ -1,0 +1,1 @@
+export { AdminCourseCard } from './AdminCourseCard';
