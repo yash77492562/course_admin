@@ -1,13 +1,24 @@
 'use client';
 
 import { useState } from 'react';
+import dynamic from 'next/dynamic';
 import { Course, CourseStatus, CourseLevel } from '@/types/course';
 import { Header } from '@/components/layout/Header';
 import { Input, Textarea, Alert } from '@/components/ui';
+import { useNotifications } from '@/contexts/NotificationContext';
+import { VideoUploaderWithProcessing } from '@/components/features/VideoUploader/VideoUploaderWithProcessing';
+import { PDFUploader } from '@/components/features/LectureUploader/PDFUploader';
+import type { VideoMetadata } from '@/types/video-processing.types';
+
+// Dynamic import for PDFViewer to prevent SSR issues
+const PDFViewerSimple = dynamic(
+  () => import('@/components/features/LectureUploader/PDFViewerSimple').then(mod => mod.PDFViewerSimple),
+  { ssr: false }
+);
 
 interface CourseEditorPageProps {
   course?: Course;
-  onSave: (data: any, status: CourseStatus) => Promise<{ success: boolean; error?: string }>;
+  onSave: (data: any, status: CourseStatus) => Promise<{ success: boolean; error?: string; data?: Course }>;
   onCancel: () => void;
   isLoading?: boolean;
 }
@@ -16,7 +27,26 @@ interface CourseEditorPageProps {
 interface EditorModule {
   id: string;
   title: string;
-  items: string[];
+  items: VideoItem[];
+}
+
+interface VideoItem {
+  id: string;
+  title: string;
+  contentType: 'VIDEO' | 'PDF'; // Content type
+  videoUrl?: string;
+  videoType?: 'UPLOAD' | 'YOUTUBE';
+  description?: string;
+  
+  // Video-specific fields
+  _r2VideoUrls?: Record<string, string>; // R2 uploaded video URLs (from backend)
+  _r2Thumbnail?: string; // R2 uploaded thumbnail URL (from backend)
+  _r2Metadata?: { originalWidth: number; originalHeight: number; duration: number }; // R2 video metadata
+  
+  // PDF-specific fields
+  pdfUrl?: string; // R2 URL for PDF
+  pdfPassword?: string; // Password for protected PDFs
+  isPasswordProtected?: boolean;
 }
 
 interface EditorFaq {
@@ -25,8 +55,8 @@ interface EditorFaq {
 }
 
 export function CourseEditorPage({ course, onSave, onCancel, isLoading }: CourseEditorPageProps) {
-  const [successMessage, setSuccessMessage] = useState('');
   const [currentStatus, setCurrentStatus] = useState<CourseStatus>(course?.status || CourseStatus.DRAFT);
+  const { success, error, warning, info } = useNotifications();
   
   // Hero Section Data (matches CourseHeroSection)
   const [heroData, setHeroData] = useState({
@@ -49,13 +79,37 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
       return course.modules.map(module => ({
         id: module.id,
         title: module.title,
-        items: module.lessons?.map(lesson => lesson.title) || ['']
+        items: module.lessons?.map(lesson => ({
+          id: lesson.id,
+          title: lesson.title,
+          contentType: (lesson.contentType as 'VIDEO' | 'PDF') || 'VIDEO',
+          videoUrl: lesson.videoUrl || '',
+          videoType: (lesson.videoType as 'UPLOAD' | 'YOUTUBE') || 'UPLOAD',
+          description: lesson.description || '',
+          pdfUrl: lesson.pdfUrl,
+          pdfPassword: lesson.pdfPassword,
+          isPasswordProtected: lesson.isPasswordProtected || false
+        })) || [{ 
+          id: `default_${Date.now()}`, 
+          title: 'Add your first video',
+          contentType: 'VIDEO' as const,
+          videoUrl: '',
+          videoType: 'UPLOAD' as const,
+          description: ''
+        }]
       }));
     }
     return [{
       id: '1',
       title: 'Module 1: Foundations',
-      items: ['Introduction lesson']
+      items: [{ 
+        id: `default_${Date.now()}`, 
+        title: 'Add your first video',
+        contentType: 'VIDEO' as const,
+        videoUrl: '',
+        videoType: 'UPLOAD' as const,
+        description: ''
+      }]
     }];
   };
 
@@ -68,44 +122,119 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
   );
   const [openFaqs, setOpenFaqs] = useState<Set<number>>(new Set([0])); // First FAQ open by default
 
+  // Video Upload State
+  const [showVideoUploader, setShowVideoUploader] = useState<{ moduleIndex: number; itemIndex: number; title: string } | null>(null);
+  
+  // PDF Lecture Upload State
+  const [showPDFUploader, setShowPDFUploader] = useState<{ moduleIndex: number; itemIndex: number } | null>(null);
+  const [showPDFViewer, setShowPDFViewer] = useState<{ pdfUrl: string; password?: string; title: string } | null>(null);
+
   const handleSave = async (status: CourseStatus = currentStatus) => {
     try {
-      const result = await onSave({
+      console.log('=== SAVING COURSE ===');
+      console.log('Current modules state:', modules);
+      
+      // STEP 1: Upload videos to R2 FIRST (before creating course)
+      const modulesWithUploadedVideos = [...modules];
+      
+      for (let moduleIndex = 0; moduleIndex < modulesWithUploadedVideos.length; moduleIndex++) {
+        const module = modulesWithUploadedVideos[moduleIndex];
+        
+        for (let itemIndex = 0; itemIndex < module.items.length; itemIndex++) {
+          const item = module.items[itemIndex];
+          
+          // Backend processing - videos are already uploaded and processed
+          // No need to upload here, backend handles everything
+          // Just keep the items as-is
+        }
+      }
+      
+      // Update state with uploaded videos
+      setModules(modulesWithUploadedVideos);
+      
+      // STEP 2: Create course with real R2 URLs
+      const courseData = {
         title: heroData.headline,
         description: heroData.subheadline,
         category: heroData.badge,
         price: parseFloat(heroData.price) || 0,
         spotsLeft: heroData.spotsLeft,
         nextCohort: heroData.nextCohort,
-        duration: '8 weeks', // Default duration
-        level: CourseLevel.BEGINNER, // Default level - required field
-        thumbnail: 'https://via.placeholder.com/400x300', // Default thumbnail - required field
-        instructor: 'TBD', // Default instructor
+        duration: '8 weeks',
+        level: CourseLevel.BEGINNER,
+        thumbnail: 'https://via.placeholder.com/400x300',
+        instructor: 'TBD',
         features: heroData.highlights.filter(h => h.trim()),
         outcomes: outcomes.filter(o => o.trim()),
-        modules: modules.map(module => ({
+        modules: modulesWithUploadedVideos.map(module => ({
           title: module.title,
-          description: `Module covering: ${module.items.join(', ')}`,
+          description: `Module covering: ${module.items.map(item => item.title).join(', ')}`,
           duration: '1 week',
-          order: modules.indexOf(module) + 1,
-          lessons: module.items.filter(item => item.trim()).map((item, index) => ({
-            title: item,
-            description: `Lesson about ${item}`,
+          order: modulesWithUploadedVideos.indexOf(module) + 1,
+          lessons: module.items.map((item, index) => ({
+            title: item.title,
+            description: item.description || `Lesson about ${item.title}`,
             duration: '1 hour',
-            order: index + 1
+            order: index + 1,
+            
+            // Content type
+            contentType: item.contentType || 'VIDEO',
+            
+            // Video fields
+            videoUrl: item.videoUrl,
+            videoType: item.videoType,
+            videoUrls: item._r2VideoUrls,
+            thumbnail: item._r2Thumbnail,
+            originalWidth: item._r2Metadata?.originalWidth,
+            originalHeight: item._r2Metadata?.originalHeight,
+            videoDuration: item._r2Metadata?.duration,
+            
+            // PDF fields
+            pdfUrl: item.pdfUrl,
+            pdfPassword: item.pdfPassword,
+            isPasswordProtected: item.isPasswordProtected || false,
           }))
         })),
         faqs: faqs.filter(f => f.question.trim() && f.answer.trim()),
         status: status
-      }, status);
+      };
+      
+      console.log('Course data being sent to API:', courseData);
+      
+      const result = await onSave(courseData, status);
+      
+      console.log('Save result:', result);
       
       if (result.success) {
         setCurrentStatus(status);
-        setSuccessMessage(`Course ${status === CourseStatus.PUBLISHED ? 'published' : 'saved as draft'} successfully!`);
-        setTimeout(() => setSuccessMessage(''), 3000);
+        success(
+          'Course Saved Successfully!',
+          `Course ${status === CourseStatus.PUBLISHED ? 'published' : 'saved as draft'} successfully!`
+        );
+      } else {
+        error(
+          'Failed to Save Course',
+          result.error || 'An unknown error occurred while saving the course',
+          {
+            action: {
+              label: 'Retry',
+              onClick: () => handleSave(status)
+            }
+          }
+        );
       }
-    } catch (error) {
-      console.error('Failed to save course:', error);
+    } catch (err) {
+      console.error('Failed to save course:', err);
+      error(
+        'Save Error',
+        err instanceof Error ? err.message : 'An unexpected error occurred',
+        {
+          action: {
+            label: 'Retry',
+            onClick: () => handleSave(status)
+          }
+        }
+      );
     }
   };
 
@@ -162,7 +291,11 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
     const newModule: EditorModule = {
       id: newModuleId,
       title: `Module ${modules.length + 1}: `,
-      items: ['']
+      items: [{ 
+        id: '1', 
+        title: 'First video lesson',
+        contentType: 'VIDEO'
+      }]
     };
     setModules([...modules, newModule]);
     // Open the new module by default
@@ -192,24 +325,107 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
     }
   };
 
-  const addModuleItem = (moduleIndex: number) => {
-    const updated = [...modules];
-    updated[moduleIndex].items.push('');
-    setModules(updated);
-  };
-
-  const updateModuleItem = (moduleIndex: number, itemIndex: number, value: string) => {
-    const updated = [...modules];
-    updated[moduleIndex].items[itemIndex] = value;
-    setModules(updated);
-  };
-
   const removeModuleItem = (moduleIndex: number, itemIndex: number) => {
     const updated = [...modules];
     if (updated[moduleIndex].items.length > 1) {
       updated[moduleIndex].items = updated[moduleIndex].items.filter((_, i) => i !== itemIndex);
       setModules(updated);
     }
+  };
+
+  // Video Upload Handler - NEW: Uses VideoUploaderWithProcessing
+  const handleVideoComplete = (
+    moduleIndex: number,
+    itemIndex: number,
+    data: {
+      videoUrls: Record<string, string>;
+      thumbnailUrl: string;
+      metadata: VideoMetadata;
+    }
+  ) => {
+    console.log('=== VIDEO PROCESSING COMPLETE ===');
+    console.log('Video URLs:', data.videoUrls);
+    console.log('Thumbnail:', data.thumbnailUrl);
+    console.log('Metadata:', data.metadata);
+
+    const updated = [...modules];
+    const title = showVideoUploader?.title || 'Untitled Video';
+
+    const videoItem: VideoItem = {
+      id: `video_${Date.now()}`,
+      title,
+      contentType: 'VIDEO',
+      description: '',
+      videoUrl: 'processed', // Placeholder - video is processed and in R2
+      videoType: 'UPLOAD',
+      _r2VideoUrls: data.videoUrls,
+      _r2Thumbnail: data.thumbnailUrl,
+      _r2Metadata: {
+        originalWidth: data.metadata.width,
+        originalHeight: data.metadata.height,
+        duration: data.metadata.duration,
+      },
+    };
+
+    if (itemIndex >= updated[moduleIndex].items.length) {
+      updated[moduleIndex].items.push(videoItem);
+    } else {
+      updated[moduleIndex].items[itemIndex] = videoItem;
+    }
+
+    console.log('Updated modules after video processing:', updated);
+
+    setModules(updated);
+    setShowVideoUploader(null);
+
+    success(
+      'Video Processed Successfully!',
+      `Video "${title}" has been processed and uploaded to R2. It will be saved to database when you publish the course.`,
+      { duration: 5000 }
+    );
+  };
+
+  // PDF Upload Handler - NEW: Handles PDF lecture uploads
+  const handlePDFComplete = (data: {
+    pdfUrl: string;
+    title: string;
+    isPasswordProtected: boolean;
+    password?: string;
+  }) => {
+    if (!showPDFUploader) return;
+
+    console.log('=== PDF UPLOAD COMPLETE ===');
+    console.log('PDF URL:', data.pdfUrl);
+    console.log('Password Protected:', data.isPasswordProtected);
+
+    const { moduleIndex, itemIndex } = showPDFUploader;
+    const updated = [...modules];
+
+    const pdfItem: VideoItem = {
+      id: `pdf_${Date.now()}`,
+      title: data.title,
+      contentType: 'PDF',
+      pdfUrl: data.pdfUrl,
+      isPasswordProtected: data.isPasswordProtected,
+      pdfPassword: data.password,
+    };
+
+    if (itemIndex >= updated[moduleIndex].items.length) {
+      updated[moduleIndex].items.push(pdfItem);
+    } else {
+      updated[moduleIndex].items[itemIndex] = pdfItem;
+    }
+
+    console.log('Updated modules after PDF upload:', updated);
+
+    setModules(updated);
+    setShowPDFUploader(null);
+
+    success(
+      'PDF Uploaded Successfully!',
+      `Lecture "${data.title}" has been uploaded to R2. It will be saved to database when you publish the course.`,
+      { duration: 5000 }
+    );
   };
 
   // FAQ Handlers
@@ -262,12 +478,6 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
     <div style={{ minHeight: '100vh', background: '#fff' }}>
       <Header />
       
-      {successMessage && (
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4">
-          <Alert variant="success">{successMessage}</Alert>
-        </div>
-      )}
-
       {/* Save/Cancel Header */}
       <div className="bg-white border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
@@ -742,13 +952,28 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
                     {isOpen && (
                       <div style={{ marginTop: '10px', paddingLeft: '20px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                          <label style={{ fontSize: '0.75rem', fontWeight: '500', color: '#64748b' }}>Module Items</label>
-                          <button 
-                            onClick={() => addModuleItem(moduleIndex)}
-                            className="bg-blue-500 hover:bg-blue-600 text-white px-2 py-1 rounded text-xs font-medium transition-colors"
-                          >
-                            + Add Item
-                          </button>
+                          <label style={{ fontSize: '0.75rem', fontWeight: '500', color: '#64748b' }}>Module Content</label>
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <button 
+                              onClick={() => {
+                                const title = prompt('Enter video title:');
+                                if (title) {
+                                  setShowVideoUploader({ moduleIndex, itemIndex: module.items.length, title });
+                                }
+                              }}
+                              className="bg-green-500 hover:bg-green-600 text-white px-2 py-1 rounded text-xs font-medium transition-colors"
+                            >
+                              + Add Video
+                            </button>
+                            <button 
+                              onClick={() => {
+                                setShowPDFUploader({ moduleIndex, itemIndex: module.items.length });
+                              }}
+                              className="bg-blue-500 hover:bg-blue-600 text-white px-2 py-1 rounded text-xs font-medium transition-colors"
+                            >
+                              + Add Lecture
+                            </button>
+                          </div>
                         </div>
                         <ul style={{ listStyleType: 'disc', color: '#64748b' }}>
                           {module.items.map((item, itemIndex) => (
@@ -761,13 +986,48 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
                               alignItems: 'center',
                               gap: '8px'
                             }}>
-                              <Input
-                                value={item}
-                                onChange={(e) => updateModuleItem(moduleIndex, itemIndex, e.target.value)}
-                                placeholder="Introduction to the Data Analytics lifecycle"
-                                className="flex-1 border-none p-0"
-                                style={{ color: '#64748b', fontSize: '0.9rem', lineHeight: '1.5' }}
-                              />
+                              {/* PDF Content */}
+                              {item.contentType === 'PDF' && item.pdfUrl ? (
+                                <button
+                                  onClick={() => {
+                                    setShowPDFViewer({
+                                      pdfUrl: item.pdfUrl!,
+                                      password: item.pdfPassword,
+                                      title: item.title
+                                    });
+                                  }}
+                                  className="flex-1 text-left border-none p-0 bg-transparent hover:text-blue-600 transition-colors cursor-pointer"
+                                  style={{ color: '#64748b', fontSize: '0.9rem', lineHeight: '1.5' }}
+                                >
+                                  📄 {item.title} {item.isPasswordProtected && '🔒'}
+                                </button>
+                              ) : 
+                              /* Video Content */
+                              item.contentType === 'VIDEO' && item.videoUrl && !item.videoUrl.startsWith('temp://') ? (
+                                <button
+                                  onClick={() => {
+                                    const videoData = encodeURIComponent(JSON.stringify({
+                                      title: item.title,
+                                      videoUrl: item.videoUrl,
+                                      videoType: item.videoType || 'UPLOAD',
+                                      description: item.description || ''
+                                    }));
+                                    window.open(`/video-player/${item.id}?data=${videoData}`, '_blank');
+                                  }}
+                                  className="flex-1 text-left border-none p-0 bg-transparent hover:text-blue-600 transition-colors cursor-pointer"
+                                  style={{ color: '#64748b', fontSize: '0.9rem', lineHeight: '1.5' }}
+                                >
+                                  🎥 {item.title}
+                                </button>
+                              ) : item.videoUrl?.startsWith('temp://') ? (
+                                <span className="flex-1 text-orange-500" style={{ fontSize: '0.9rem', lineHeight: '1.5' }}>
+                                  📁 {item.title} (Ready to upload)
+                                </span>
+                              ) : (
+                                <span className="flex-1 text-gray-400" style={{ fontSize: '0.9rem', lineHeight: '1.5' }}>
+                                  📝 {item.title} (No content uploaded)
+                                </span>
+                              )}
                               {module.items.length > 1 && (
                                 <button 
                                   onClick={() => removeModuleItem(moduleIndex, itemIndex)}
@@ -951,6 +1211,64 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
           </div>
         </div>
       </section>
+
+      {/* Video Upload Modal - NEW: Quality Selection Flow */}
+      {showVideoUploader && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+            <VideoUploaderWithProcessing
+              lessonId={`temp_${Date.now()}`}
+              lessonName={showVideoUploader.title}
+              onComplete={(data) => handleVideoComplete(
+                showVideoUploader.moduleIndex,
+                showVideoUploader.itemIndex,
+                data
+              )}
+              onCancel={() => setShowVideoUploader(null)}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* PDF Upload Modal - NEW: PDF Lecture Upload */}
+      {showPDFUploader && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+            <PDFUploader
+              onComplete={handlePDFComplete}
+              onCancel={() => setShowPDFUploader(null)}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* PDF Viewer Modal - NEW: View PDF Lectures */}
+      {showPDFViewer && typeof window !== 'undefined' && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl w-full h-full max-w-6xl max-h-[90vh] m-4 flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-900">
+                {showPDFViewer.title}
+              </h3>
+              <button
+                onClick={() => setShowPDFViewer(null)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="flex-1 overflow-hidden">
+              <PDFViewerSimple
+                pdfUrl={showPDFViewer.pdfUrl}
+                password={showPDFViewer.password}
+                title={showPDFViewer.title}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

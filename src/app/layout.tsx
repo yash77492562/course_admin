@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { NotificationProvider } from "@/contexts/NotificationContext";
+import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 
 export const metadata: Metadata = {
   title: "Riva Data Admin",
@@ -17,7 +19,11 @@ export default function RootLayout({
         className="antialiased bg-gray-50 min-h-screen"
         suppressHydrationWarning={true}
       >
-        {children}
+        <ErrorBoundary>
+          <NotificationProvider>
+            {children}
+          </NotificationProvider>
+        </ErrorBoundary>
       </body>
     </html>
   );

@@ -85,7 +85,24 @@ export interface Lesson {
   title: string;
   description: string;
   duration: string;
+  
+  // Content type
+  contentType?: 'VIDEO' | 'PDF';
+  
+  // Video fields
   videoUrl?: string;
+  videoUrls?: Record<string, string>; // Multiple quality URLs
+  videoType?: 'UPLOAD' | 'YOUTUBE';
+  thumbnail?: string;
+  originalWidth?: number;
+  originalHeight?: number;
+  videoDuration?: number;
+  
+  // PDF fields
+  pdfUrl?: string;
+  pdfPassword?: string;
+  isPasswordProtected?: boolean;
+  
   order: number;
   moduleId: string;
   createdAt: string;

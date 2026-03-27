@@ -1,56 +1,89 @@
-import { useState, useEffect } from 'react';
-import { Course, CreateCourseData } from '@/types/course';
+import { useState, useEffect, useCallback } from 'react';
+import { Course, CreateCourseData, CourseStatus } from '@/types/course';
+import { PaginationParams, PaginatedResponse } from '@/types/pagination/pagination';
 import { courseApi } from '@/lib/courseApi/courseApi';
 
-export function useCourses() {
+interface UseCoursesOptions {
+  enablePagination?: boolean;
+  initialParams?: PaginationParams;
+  onError?: (error: string) => void;
+}
+
+export function useCourses(options: UseCoursesOptions = {}) {
+  const { enablePagination = false, initialParams, onError } = options;
+  
   const [courses, setCourses] = useState<Course[]>([]);
+  const [pagination, setPagination] = useState<PaginatedResponse<Course>['pagination'] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const loadCourses = async () => {
+  const loadCourses = useCallback(async (params?: PaginationParams) => {
     try {
       setLoading(true);
       setError(null);
-      const data = await courseApi.getAllCourses();
-      setCourses(data);
+      
+      const result = await courseApi.getAllCourses(enablePagination ? params : undefined);
+      
+      if (enablePagination && result && 'pagination' in result) {
+        setCourses(Array.isArray(result.data) ? result.data : []);
+        setPagination(result.pagination);
+      } else {
+        setCourses(Array.isArray(result) ? result : []);
+        setPagination(null);
+      }
     } catch (err) {
-      setError('Failed to load courses. Please check if the backend is running.');
+      const errorMessage = err instanceof Error ? err.message : 'Failed to load courses. Please check if the backend is running.';
+      setError(errorMessage);
+      onError?.(errorMessage);
       console.error('Failed to load courses:', err);
+      setCourses([]);
+      setPagination(null);
     } finally {
       setLoading(false);
     }
-  };
+  }, [enablePagination, onError]);
 
   const createCourse = async (data: CreateCourseData) => {
     try {
-      await courseApi.createCourse(data);
-      await loadCourses(); // Refresh the list
-      return { success: true };
+      const result = await courseApi.createCourse(data);
+      if (result.success) {
+        await loadCourses(initialParams); // Refresh the list
+        return { success: true, data: result.data };
+      } else {
+        onError?.(result.error || 'Failed to create course');
+        return { success: false, error: result.error || 'Failed to create course' };
+      }
     } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to create course';
       console.error('Failed to create course:', err);
-      return { success: false, error: 'Failed to create course' };
+      onError?.(errorMessage);
+      return { success: false, error: errorMessage };
     }
   };
 
   const updateCourse = async (id: string, data: Partial<CreateCourseData>) => {
     try {
       await courseApi.updateCourse(id, data);
-      await loadCourses(); // Refresh the list
+      await loadCourses(initialParams); // Refresh the list
       return { success: true };
     } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to update course';
       console.error('Failed to update course:', err);
-      return { success: false, error: 'Failed to update course' };
+      onError?.(errorMessage);
+      return { success: false, error: errorMessage };
     }
   };
 
   const deleteCourse = async (id: string) => {
     try {
       await courseApi.deleteCourse(id);
-      await loadCourses(); // Refresh the list
+      await loadCourses(initialParams); // Refresh the list
       return { success: true };
     } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to delete course';
       console.error('Failed to delete course:', err);
-      return { success: false, error: 'Failed to delete course' };
+      onError?.(errorMessage);
+      return { success: false, error: errorMessage };
     }
   };
 
@@ -59,23 +92,26 @@ export function useCourses() {
       const data = await courseApi.getCourseById(id);
       return { success: true, data };
     } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to get course';
       console.error('Failed to get course:', err);
-      return { success: false, error: 'Failed to get course' };
+      onError?.(errorMessage);
+      return { success: false, error: errorMessage };
     }
   };
 
   useEffect(() => {
-    loadCourses();
-  }, []);
+    loadCourses(initialParams);
+  }, [loadCourses, initialParams]);
 
   const stats = {
-    total: courses.length,
-    published: courses.filter(c => c.status === 'PUBLISHED').length,
-    drafts: courses.filter(c => c.status === 'DRAFT').length,
+    total: Array.isArray(courses) ? courses.length : 0,
+    published: Array.isArray(courses) ? courses.filter(c => c.status === 'PUBLISHED').length : 0,
+    drafts: Array.isArray(courses) ? courses.filter(c => c.status === 'DRAFT').length : 0,
   };
 
   return {
     courses,
+    pagination,
     loading,
     error,
     stats,

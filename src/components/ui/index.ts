@@ -8,3 +8,5 @@ export { Badge } from './Badge/Badge';
 export { Error } from './Error/Error';
 export { Warning } from './Warning/Warning';
 export { Loading } from './Loading/Loading';
+export { Pagination } from './Pagination/Pagination';
+export { SearchInput } from './SearchInput/SearchInput';

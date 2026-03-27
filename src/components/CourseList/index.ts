@@ -1,1 +1,0 @@
-export { CourseList } from './CourseList';

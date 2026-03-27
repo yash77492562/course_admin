@@ -47,6 +47,11 @@ class ApiClient {
         throw new Error(result.message);
       }
 
+      // Handle nested data structure from backend
+      if (result.data && typeof result.data === 'object' && 'data' in result.data) {
+        return result.data.data as T;
+      }
+
       return result.data as T;
     } catch (error) {
       console.error('API request failed:', error);

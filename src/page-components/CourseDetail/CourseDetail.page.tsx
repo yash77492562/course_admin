@@ -239,6 +239,7 @@ export function CourseDetailPage({
             <div className="p-6">
               <h2 className="text-xl font-semibold mb-6">Add New Module</h2>
               <ModuleForm
+                nextOrder={(course?.modules?.length || 0) + 1}
                 onSubmit={handleAddModule}
                 onCancel={() => setShowModuleForm(false)}
               />
