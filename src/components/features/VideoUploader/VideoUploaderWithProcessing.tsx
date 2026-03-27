@@ -167,57 +167,97 @@ export function VideoUploaderWithProcessing({
       console.log('✅ Video added to processing queue');
       info('Video Queued', 'Your video has been added to the processing queue');
 
-      // Connect to SSE for progress updates
+      // Connect to SSE for progress updates with retry logic
       const sseUrl = `${process.env.NEXT_PUBLIC_API_URL}/api/video-processing/progress/${lessonId}`;
       console.log('📡 Connecting to SSE:', sseUrl);
       
-      const es = new EventSource(sseUrl);
+      let reconnectAttempts = 0;
+      const maxReconnectAttempts = 5;
+      const reconnectDelay = 2000; // 2 seconds
+      
+      const connectSSE = () => {
+        const es = new EventSource(sseUrl);
 
-      es.onopen = () => {
-        console.log('✅ SSE connection established');
-      };
+        es.onopen = () => {
+          console.log('✅ SSE connection established');
+          reconnectAttempts = 0; // Reset on successful connection
+        };
 
-      es.onmessage = (event) => {
-        const status = JSON.parse(event.data) as ProcessingStatus;
-        console.log('📊 Progress update:', status);
-        setProcessingStatus(status);
-
-        // Show notifications for key status changes
-        if (status.status === 'queued' && status.queuePosition) {
-          info('Video Queued', `Position in queue: ${status.queuePosition}`);
-        } else if (status.status === 'processing' && status.progress === 10) {
-          info('Processing Started', 'Video processing has begun');
-        } else if (status.status === 'complete' && status.videoUrls && status.thumbnailUrl && videoMetadata) {
-          console.log('✅ Processing complete!');
-          console.log('   Video URLs:', status.videoUrls);
-          console.log('   Thumbnail:', status.thumbnailUrl);
+        es.onmessage = (event) => {
+          const status = JSON.parse(event.data) as ProcessingStatus;
           
-          success(
-            'Processing Complete!',
-            `Video processed successfully with ${Object.keys(status.videoUrls).length} quality version(s)`
-          );
+          // Ignore heartbeat messages
+          if (status.status === 'heartbeat' || status.status === 'connecting') {
+            console.log('💓 Heartbeat received');
+            return;
+          }
           
-          onComplete({
-            videoUrls: status.videoUrls,
-            thumbnailUrl: status.thumbnailUrl,
-            metadata: videoMetadata,
-          });
-          es.close();
-        } else if (status.status === 'error') {
-          console.error('❌ Processing error:', status.error);
-          showError('Processing Failed', status.error || 'An error occurred during processing');
-          es.close();
-        }
-      };
+          console.log('📊 Progress update:', status);
+          setProcessingStatus(status);
 
-      es.onerror = (err) => {
-        console.error('❌ SSE connection error:', err);
-        setError('Connection to server lost');
-        showError('Connection Lost', 'Lost connection to server. Please try again.');
-        es.close();
-      };
+          // Show notifications for key status changes
+          if (status.status === 'queued' && status.queuePosition) {
+            info('Video Queued', `Position in queue: ${status.queuePosition}`);
+          } else if (status.status === 'processing' && status.progress === 10) {
+            info('Processing Started', 'Video processing has begun');
+          } else if (status.status === 'complete' && status.videoUrls && status.thumbnailUrl && videoMetadata) {
+            console.log('✅ Processing complete!');
+            console.log('   Video URLs (HLS playlists):', status.videoUrls);
+            console.log('   Thumbnail:', status.thumbnailUrl);
+            if (status.masterPlaylistUrl) {
+              console.log('   Master Playlist:', status.masterPlaylistUrl);
+            }
+            console.log('   Metadata:', videoMetadata);
+            console.log('📤 Calling onComplete with data...');
+            
+            success(
+              'Processing Complete!',
+              `Video processed successfully with ${Object.keys(status.videoUrls).length} quality version(s)`
+            );
+            
+            const dataToPass = {
+              videoUrls: status.videoUrls,
+              thumbnailUrl: status.thumbnailUrl,
+              masterPlaylistUrl: status.masterPlaylistUrl,
+              metadata: videoMetadata,
+            };
+            
+            console.log('📦 Data being passed to onComplete:', dataToPass);
+            
+            onComplete(dataToPass);
+            es.close();
+          } else if (status.status === 'error') {
+            console.error('❌ Processing error:', status.error);
+            showError('Processing Failed', status.error || 'An error occurred during processing');
+            es.close();
+          }
+        };
 
-      setEventSource(es);
+        es.onerror = (err) => {
+          console.error('❌ SSE connection error:', err);
+          es.close();
+          
+          // Attempt to reconnect
+          if (reconnectAttempts < maxReconnectAttempts) {
+            reconnectAttempts++;
+            console.log(`🔄 Attempting to reconnect (${reconnectAttempts}/${maxReconnectAttempts})...`);
+            info('Reconnecting', `Attempting to reconnect to server (${reconnectAttempts}/${maxReconnectAttempts})...`);
+            
+            setTimeout(() => {
+              connectSSE();
+            }, reconnectDelay);
+          } else {
+            console.error('❌ Max reconnection attempts reached');
+            setError('Connection to server lost');
+            showError('Connection Lost', 'Lost connection to server. Please try again.');
+          }
+        };
+
+        setEventSource(es);
+      };
+      
+      // Initial connection
+      connectSSE();
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Failed to start processing';
       console.error('❌ Failed to start processing:', err);

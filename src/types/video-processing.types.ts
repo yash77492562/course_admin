@@ -25,7 +25,7 @@ export interface QualityProgress {
 
 export interface ProcessingStatus {
   lessonId: string;
-  status: 'queued' | 'analyzing' | 'processing' | 'uploading' | 'complete' | 'error';
+  status: 'queued' | 'analyzing' | 'processing' | 'uploading' | 'complete' | 'error' | 'connecting' | 'heartbeat';
   progress: number;
   queuePosition?: number;
   currentQuality?: string;

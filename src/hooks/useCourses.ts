@@ -45,17 +45,24 @@ export function useCourses(options: UseCoursesOptions = {}) {
 
   const createCourse = async (data: CreateCourseData) => {
     try {
+      console.log('🎯 useCourses: createCourse called');
+      console.log('📦 Data:', JSON.stringify(data, null, 2));
+      
       const result = await courseApi.createCourse(data);
+      
+      console.log('📡 API result:', result);
+      
       if (result.success) {
         await loadCourses(initialParams); // Refresh the list
         return { success: true, data: result.data };
       } else {
+        console.error('❌ API returned error:', result.error);
         onError?.(result.error || 'Failed to create course');
         return { success: false, error: result.error || 'Failed to create course' };
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to create course';
-      console.error('Failed to create course:', err);
+      console.error('❌ Exception in createCourse:', err);
       onError?.(errorMessage);
       return { success: false, error: errorMessage };
     }

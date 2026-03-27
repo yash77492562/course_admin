@@ -38,8 +38,9 @@ interface VideoItem {
   videoType?: 'UPLOAD' | 'YOUTUBE';
   description?: string;
   
-  // Video-specific fields
-  _r2VideoUrls?: Record<string, string>; // R2 uploaded video URLs (from backend)
+  // Video-specific fields (HLS support)
+  _r2VideoUrls?: Record<string, string>; // HLS playlist URLs per quality (from backend)
+  _r2MasterPlaylist?: string; // HLS master playlist URL (from backend)
   _r2Thumbnail?: string; // R2 uploaded thumbnail URL (from backend)
   _r2Metadata?: { originalWidth: number; originalHeight: number; duration: number }; // R2 video metadata
   
@@ -171,29 +172,38 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
           description: `Module covering: ${module.items.map(item => item.title).join(', ')}`,
           duration: '1 week',
           order: modulesWithUploadedVideos.indexOf(module) + 1,
-          lessons: module.items.map((item, index) => ({
-            title: item.title,
-            description: item.description || `Lesson about ${item.title}`,
-            duration: '1 hour',
-            order: index + 1,
+          lessons: module.items.map((item, index) => {
+            console.log(`🔍 Mapping lesson ${index + 1}:`, item.title);
+            console.log('   item._r2VideoUrls:', item._r2VideoUrls);
+            console.log('   item._r2MasterPlaylist:', item._r2MasterPlaylist);
+            console.log('   item._r2Thumbnail:', item._r2Thumbnail);
+            console.log('   item._r2Metadata:', item._r2Metadata);
             
-            // Content type
-            contentType: item.contentType || 'VIDEO',
-            
-            // Video fields
-            videoUrl: item.videoUrl,
-            videoType: item.videoType,
-            videoUrls: item._r2VideoUrls,
-            thumbnail: item._r2Thumbnail,
-            originalWidth: item._r2Metadata?.originalWidth,
-            originalHeight: item._r2Metadata?.originalHeight,
-            videoDuration: item._r2Metadata?.duration,
-            
-            // PDF fields
-            pdfUrl: item.pdfUrl,
-            pdfPassword: item.pdfPassword,
-            isPasswordProtected: item.isPasswordProtected || false,
-          }))
+            return {
+              title: item.title,
+              description: item.description || `Lesson about ${item.title}`,
+              duration: '1 hour',
+              order: index + 1,
+              
+              // Content type
+              contentType: item.contentType || 'VIDEO',
+              
+              // Video fields - HLS streaming
+              videoUrl: item.videoUrl,
+              videoType: item.videoType,
+              hlsMasterPlaylist: item._r2MasterPlaylist, // HLS master playlist
+              hlsQualities: item._r2VideoUrls, // HLS quality playlists (480p, 720p, 1080p)
+              thumbnail: item._r2Thumbnail,
+              originalWidth: item._r2Metadata?.originalWidth,
+              originalHeight: item._r2Metadata?.originalHeight,
+              videoDuration: item._r2Metadata?.duration,
+              
+              // PDF fields
+              pdfUrl: item.pdfUrl,
+              pdfPassword: item.pdfPassword,
+              isPasswordProtected: item.isPasswordProtected || false,
+            };
+          })
         })),
         faqs: faqs.filter(f => f.question.trim() && f.answer.trim()),
         status: status
@@ -344,7 +354,7 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
     }
   ) => {
     console.log('=== VIDEO PROCESSING COMPLETE ===');
-    console.log('Video URLs:', data.videoUrls);
+    console.log('HLS Quality URLs:', data.videoUrls);
     console.log('Thumbnail:', data.thumbnailUrl);
     console.log('Metadata:', data.metadata);
 
@@ -358,7 +368,8 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
       description: '',
       videoUrl: 'processed', // Placeholder - video is processed and in R2
       videoType: 'UPLOAD',
-      _r2VideoUrls: data.videoUrls,
+      _r2VideoUrls: data.videoUrls, // HLS quality playlists
+      _r2MasterPlaylist: data.masterPlaylistUrl, // HLS master playlist
       _r2Thumbnail: data.thumbnailUrl,
       _r2Metadata: {
         originalWidth: data.metadata.width,
@@ -380,7 +391,7 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
 
     success(
       'Video Processed Successfully!',
-      `Video "${title}" has been processed and uploaded to R2. It will be saved to database when you publish the course.`,
+      `Video "${title}" has been processed with HLS streaming. It will be saved to database when you publish the course.`,
       { duration: 5000 }
     );
   };

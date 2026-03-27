@@ -35,6 +35,18 @@ const nextConfig: NextConfig = {
     ],
   },
   
+  // Fix Video.js package.json parsing issue
+  webpack: (config, { isServer }) => {
+    if (!isServer) {
+      // Ignore Video.js package.json files that cause parsing errors
+      config.resolve.alias = {
+        ...config.resolve.alias,
+        'video.js/package.json': false,
+      };
+    }
+    return config;
+  },
+  
   async rewrites() {
     return [
       {

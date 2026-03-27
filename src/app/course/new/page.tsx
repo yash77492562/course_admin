@@ -12,13 +12,20 @@ export default function NewCoursePage() {
 
   const handleSave = async (data: any, status: any) => {
     try {
+      console.log('🚀 NEW COURSE PAGE: handleSave called');
+      console.log('📦 Data to save:', JSON.stringify(data, null, 2));
+      console.log('📊 Status:', status);
+      
       const result = await actions.createCourse({ ...data, status });
+      
+      console.log('✅ Create course result:', result);
+      
       if (result.success) {
         router.push('/');
       }
       return result;
     } catch (error) {
-      console.error('Failed to create course:', error);
+      console.error('❌ Failed to create course:', error);
       return { success: false, error: 'Failed to create course' };
     }
   };

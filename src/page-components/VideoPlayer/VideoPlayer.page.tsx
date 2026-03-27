@@ -2,7 +2,13 @@
 
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { CustomVideoPlayer } from '@/components/features/VideoPlayer/CustomVideoPlayer';
+import dynamic from 'next/dynamic';
+
+// Dynamic import to prevent SSR issues with Video.js
+const HLSVideoPlayer = dynamic(
+  () => import('@/components/features/VideoPlayer/HLSVideoPlayer').then(mod => ({ default: mod.HLSVideoPlayer })),
+  { ssr: false }
+);
 
 interface VideoPlayerPageProps {
   videoId: string;
@@ -249,9 +255,9 @@ export function VideoPlayerPage({ videoId }: VideoPlayerPageProps) {
                   </div>
                 </div>
               ) : (
-                // For uploaded videos, use custom player with quality controls
+                // For uploaded videos, use HLS player with quality controls
                 videoData.videoUrls && Object.keys(videoData.videoUrls).length > 0 ? (
-                  <CustomVideoPlayer
+                  <HLSVideoPlayer
                     videoUrls={videoData.videoUrls}
                     thumbnail={videoData.thumbnail}
                     title={videoData.title}
