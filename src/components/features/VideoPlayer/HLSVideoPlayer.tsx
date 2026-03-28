@@ -32,6 +32,7 @@ export function HLSVideoPlayer({
   const playerRef = useRef<any>(null);
   const [isReady, setIsReady] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
+  const [currentQuality, setCurrentQuality] = useState<string>('Auto');
 
   // Ensure component is mounted before initializing Video.js
   useEffect(() => {
@@ -187,10 +188,13 @@ export function HLSVideoPlayer({
           
           // Custom menu item for each quality
           class QualityMenuItem extends MenuItem {
+            private isCurrentlySelected: boolean = false;
+            
             constructor(player: videojs.Player, options: any) {
               super(player, options);
               this.selectable = true;
-              this.selected(options.selected || false);
+              this.isCurrentlySelected = options.selected || false;
+              this.selected(this.isCurrentlySelected);
             }
             
             handleClick() {
@@ -202,55 +206,125 @@ export function HLSVideoPlayer({
               const currentTime = player.currentTime();
               const wasPaused = player.paused();
               
+              console.log('🎯 Quality clicked:', this.options_.label, 'Value:', this.options_.value);
+              
+              // First, remove 'vjs-selected' class from ALL menu items using DOM query
+              if (parent && parent.el) {
+                const allMenuItems = parent.el().querySelectorAll('.vjs-menu-item');
+                allMenuItems.forEach((item: Element) => {
+                  item.classList.remove('vjs-selected');
+                  item.setAttribute('aria-checked', 'false');
+                });
+              }
+              
+              // Also try to deselect via Video.js API
+              if (parent && parent.children) {
+                const menuItems = parent.children();
+                for (let i = 0; i < menuItems.length; i++) {
+                  const item = menuItems[i];
+                  if (item && item.el) {
+                    item.el().classList.remove('vjs-selected');
+                    item.el().setAttribute('aria-checked', 'false');
+                    if (typeof item.selected === 'function') {
+                      item.selected(false);
+                    }
+                    if (item.isCurrentlySelected !== undefined) {
+                      item.isCurrentlySelected = false;
+                    }
+                  }
+                }
+              }
+              
+              // Add 'vjs-selected' class to ONLY this item
+              this.el().classList.add('vjs-selected');
+              this.el().setAttribute('aria-checked', 'true');
+              this.isCurrentlySelected = true;
+              this.selected(true);
+              
+              console.log('✅ Selection updated - only', this.options_.label, 'should be selected');
+              
+              // Save selected value to parent
+              if (parent && typeof parent.setSelectedQuality === 'function') {
+                parent.setSelectedQuality(this.options_.value);
+              }
+              
               if (this.options_.value === 'auto') {
                 // Enable all qualities for auto mode
                 for (let i = 0; i < qualityLevels.length; i++) {
                   qualityLevels[i].enabled = true;
                 }
                 console.log('🔄 Quality set to: Auto (adaptive streaming enabled)');
+                setCurrentQuality('Auto');
               } else {
                 // Get the selected quality height
                 const selectedHeight = qualityLevels[this.options_.value].height;
                 
-                // Enable all quality levels with the same height, disable others
+                // FIRST: Disable all quality levels
                 for (let i = 0; i < qualityLevels.length; i++) {
-                  qualityLevels[i].enabled = (qualityLevels[i].height === selectedHeight);
+                  qualityLevels[i].enabled = false;
                 }
+                
+                // THEN: Enable only the selected quality
+                qualityLevels[this.options_.value].enabled = true;
+                
                 console.log('🔄 Quality set to:', selectedHeight + 'p');
+                console.log('🔄 Forcing quality switch by clearing buffer...');
+                setCurrentQuality(selectedHeight + 'p');
+                
+                // Force immediate quality switch by triggering a seek
+                const tech = player.tech({ IWillNotUseThisInPlugins: true });
+                if (tech && tech.vhs) {
+                  // Clear the buffer to force reload with new quality
+                  try {
+                    const mediaSource = tech.vhs.mediaSource;
+                    if (mediaSource && mediaSource.sourceBuffers) {
+                      for (let i = 0; i < mediaSource.sourceBuffers.length; i++) {
+                        const sourceBuffer = mediaSource.sourceBuffers[i];
+                        if (!sourceBuffer.updating && sourceBuffer.buffered.length > 0) {
+                          const start = sourceBuffer.buffered.start(0);
+                          const end = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
+                          if (end > start) {
+                            sourceBuffer.remove(start, end);
+                            console.log('🧹 Cleared buffer to force quality switch');
+                          }
+                        }
+                      }
+                    }
+                  } catch (err) {
+                    console.warn('⚠️ Could not clear buffer:', err);
+                  }
+                }
               }
               
-              // Resume from saved position after a short delay
+              // Update button label immediately
+              if (parent && typeof parent.updateLabel === 'function') {
+                const controlTextEl = parent.el().querySelector('.vjs-control-text');
+                if (controlTextEl) {
+                  controlTextEl.textContent = this.options_.label;
+                  console.log('🏷️ Button label updated to:', this.options_.label);
+                }
+              }
+              
+              // Force a seek to trigger quality switch
               setTimeout(() => {
                 if (player && !player.isDisposed()) {
+                  // Seek to current position to force reload
                   player.currentTime(currentTime);
+                  
                   if (!wasPaused) {
                     player.play().catch((err: Error) => {
                       console.warn('⚠️ Autoplay after quality change failed:', err);
                     });
                   }
                 }
-              }, 100);
-              
-              // Update selected state for all menu items
-              if (parent && parent.children) {
-                const menuItems = parent.children();
-                for (let i = 0; i < menuItems.length; i++) {
-                  const item = menuItems[i];
-                  if (item && typeof item.selected === 'function') {
-                    item.selected(item.options_.value === this.options_.value);
-                  }
-                }
-              }
-              
-              // Update button label
-              if (parent && typeof parent.updateLabel === 'function') {
-                parent.updateLabel();
-              }
+              }, 200);
             }
           }
           
           // Custom menu button for quality selector
           class QualityMenuButton extends MenuButton {
+            private selectedQualityValue: string | number = 'auto';
+            
             constructor(player: videojs.Player, options: any) {
               super(player, options);
               this.addClass('vjs-quality-selector');
@@ -264,6 +338,14 @@ export function HLSVideoPlayer({
               
               // Set initial label
               setTimeout(() => this.updateLabel(), 100);
+            }
+            
+            setSelectedQuality(value: string | number) {
+              this.selectedQualityValue = value;
+            }
+            
+            getSelectedQuality() {
+              return this.selectedQualityValue;
             }
             
             updateLabel() {
@@ -301,12 +383,13 @@ export function HLSVideoPlayer({
             createItems() {
               const qualityLevels = this.player().qualityLevels();
               const items = [];
+              const selectedValue = this.selectedQualityValue;
               
-              // Add "Auto" option (default)
+              // Add "Auto" option
               items.push(new QualityMenuItem(this.player(), {
                 label: 'Auto',
                 value: 'auto',
-                selected: true,
+                selected: selectedValue === 'auto',
                 parent: this
               }));
               
@@ -327,10 +410,12 @@ export function HLSVideoPlayer({
                 items.push(new QualityMenuItem(this.player(), {
                   label: height + 'p',
                   value: index,
-                  selected: false,
+                  selected: selectedValue === index,
                   parent: this
                 }));
               });
+              
+              console.log('📋 Quality menu items created:', items.length, 'Selected:', selectedValue);
               
               return items;
             }
@@ -384,6 +469,19 @@ export function HLSVideoPlayer({
       player.on('loadeddata', () => {
         console.log('📥 Video data loaded');
       });
+      
+      // Track segment loading to verify quality switching
+      const tech = player.tech({ IWillNotUseThisInPlugins: true });
+      if (tech && tech.vhs) {
+        tech.vhs.on('loadedplaylist', () => {
+          const qualityLevels = player.qualityLevels();
+          console.log('📋 Playlist loaded, current quality levels:');
+          for (let i = 0; i < qualityLevels.length; i++) {
+            const level = qualityLevels[i];
+            console.log(`   ${level.height}p: ${level.enabled ? '✅ ENABLED' : '❌ disabled'}`);
+          }
+        });
+      }
     }
 
     // Cleanup on unmount
@@ -480,13 +578,17 @@ export function HLSVideoPlayer({
           background-color: var(--vjs-theme-city--primary);
         }
         
-        /* Ensure controls are visible */
+        /* Ensure controls are visible and properly aligned */
         .video-js .vjs-control-bar {
           display: flex !important;
+          align-items: center;
+          height: 3em;
         }
         
         .video-js .vjs-control {
-          display: block !important;
+          display: flex !important;
+          align-items: center;
+          justify-content: center;
         }
         
         /* Fix video dimensions */
@@ -498,7 +600,8 @@ export function HLSVideoPlayer({
         
         /* Quality Selector Styles */
         .vjs-quality-selector {
-          min-width: 60px;
+          min-width: 70px !important;
+          order: 8;
         }
         
         .vjs-quality-selector .vjs-control-text {
@@ -507,11 +610,14 @@ export function HLSVideoPlayer({
           clip: auto !important;
           width: auto !important;
           height: auto !important;
-          padding: 0 8px;
-          font-size: 13px;
-          font-weight: 600;
-          line-height: 3em;
-          color: white;
+          margin: 0 !important;
+          padding: 0 6px !important;
+          font-size: 14px !important;
+          font-weight: 600 !important;
+          line-height: 3em !important;
+          color: white !important;
+          text-transform: none !important;
+          letter-spacing: 0.3px;
         }
         
         .vjs-quality-selector .vjs-icon-placeholder {
@@ -519,26 +625,73 @@ export function HLSVideoPlayer({
         }
         
         .vjs-quality-selector button {
-          min-width: 60px;
+          min-width: 70px !important;
         }
         
         .vjs-quality-selector .vjs-menu {
-          min-width: 100px;
+          min-width: 140px;
           bottom: 100%;
+          left: 50%;
+          transform: translateX(-50%);
+          background: rgba(0, 0, 0, 0.95);
+          border-radius: 8px;
+          padding: 8px 0;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
         }
         
         .vjs-quality-selector .vjs-menu-item {
-          text-align: center;
-          padding: 8px 16px;
-          font-size: 14px;
+          text-align: left;
+          padding: 12px 24px;
+          font-size: 15px;
+          font-weight: 500;
+          color: white;
+          transition: all 0.2s;
+        }
+        
+        /* Hide the "selected" accessibility text */
+        .vjs-quality-selector .vjs-menu-item .vjs-control-text {
+          display: none !important;
         }
         
         .vjs-quality-selector .vjs-menu-item.vjs-selected {
-          background-color: var(--vjs-theme-city--primary);
-          color: white;
+          background-color: #0ea5e9 !important;
+          color: white !important;
+          font-weight: 600;
+        }
+        
+        /* Only show checkmark on selected items */
+        .vjs-quality-selector .vjs-menu-item::before {
+          content: '';
+          margin-right: 0;
+        }
+        
+        .vjs-quality-selector .vjs-menu-item.vjs-selected::before {
+          content: '✓ ';
+          margin-right: 8px;
+          font-weight: bold;
+          font-size: 16px;
+        }
+        
+        /* Remove selected state from non-selected items */
+        .vjs-quality-selector .vjs-menu-item:not(.vjs-selected) {
+          background-color: transparent !important;
+        }
+        
+        .vjs-quality-selector .vjs-menu-item:not(.vjs-selected)::before {
+          content: '' !important;
+          margin-right: 0 !important;
         }
         
         .vjs-quality-selector .vjs-menu-item:hover {
+          background-color: rgba(14, 165, 233, 0.3) !important;
+          cursor: pointer;
+        }
+        
+        .vjs-quality-selector .vjs-menu-item.vjs-selected:hover {
+          background-color: #0ea5e9 !important;
+        }
+        
+        .vjs-quality-selector .vjs-menu-item:focus {
           background-color: rgba(14, 165, 233, 0.2);
         }
       `}</style>
