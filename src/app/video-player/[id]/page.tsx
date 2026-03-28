@@ -1,17 +1,18 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 
 // Dynamic import to prevent SSR issues with Video.js
-const HLSVideoPlayer = dynamic(
-  () => import('@/components/features/VideoPlayer/HLSVideoPlayer').then(mod => ({ default: mod.HLSVideoPlayer })),
+const VideoPlayerWrapper = dynamic(
+  () => import('@/components/features/VideoPlayer').then(mod => ({ default: mod.VideoPlayerWrapper })),
   { ssr: false }
 );
 
 export default function VideoPlayerPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const videoId = params.id as string;
   
   const [videoData, setVideoData] = useState<any>(null);
@@ -20,6 +21,22 @@ export default function VideoPlayerPage() {
   useEffect(() => {
     const loadVideo = async () => {
       try {
+        // First check if data is passed via URL parameter (for preview before saving)
+        const dataParam = searchParams.get('data');
+        if (dataParam) {
+          try {
+            const decodedData = JSON.parse(decodeURIComponent(dataParam));
+            console.log('📹 Using data from URL parameter:', decodedData);
+            setVideoData(decodedData);
+            setLoading(false);
+            return;
+          } catch (parseError) {
+            console.error('Failed to parse video data from URL:', parseError);
+            // Continue to fetch from API
+          }
+        }
+
+        // Fetch from API if no URL parameter
         const response = await fetch(`/api/lessons/${videoId}`);
         const result = await response.json();
         
@@ -35,7 +52,7 @@ export default function VideoPlayerPage() {
     };
 
     loadVideo();
-  }, [videoId]);
+  }, [videoId, searchParams]);
 
   if (loading) {
     return (
@@ -54,37 +71,35 @@ export default function VideoPlayerPage() {
   }
 
   console.log('📹 Video Data:', videoData);
+  console.log('📹 Video Type:', videoData.videoType);
   console.log('📹 HLS Master Playlist:', videoData.hlsMasterPlaylist);
   console.log('📹 HLS Qualities:', videoData.hlsQualities);
   console.log('📹 Video URLs:', videoData.videoUrls);
+  console.log('📹 Video URL:', videoData.videoUrl);
 
-  // Check if video has any playable source
+  // Check video type and availability
+  const isYouTube = videoData.videoType === 'YOUTUBE';
   const hasHLS = videoData.hlsMasterPlaylist || (videoData.hlsQualities && Object.keys(videoData.hlsQualities).length > 0);
   const hasMP4 = videoData.videoUrls && Object.keys(videoData.videoUrls).length > 0;
   
-  // Special case: video was processed but HLS data wasn't saved
-  const isProcessedButMissingHLS = videoData.videoUrl === 'processed' && !hasHLS && !hasMP4;
-  
-  if (isProcessedButMissingHLS) {
+  // For YouTube videos, only check if videoUrl exists
+  if (isYouTube && !videoData.videoUrl) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center">
-        <div className="text-center max-w-md">
-          <div className="text-yellow-400 text-xl mb-4">⚠️ Video Processing Incomplete</div>
-          <div className="text-gray-400 text-sm space-y-2">
-            <p>This video was processed but the streaming data wasn't saved to the database.</p>
-            <p className="font-semibold text-white mt-4">To fix this:</p>
-            <ol className="text-left list-decimal list-inside space-y-1 mt-2">
-              <li>Go to the course editor</li>
-              <li>Re-upload the video</li>
-              <li>Click "Publish" to save the HLS streaming data</li>
-            </ol>
+        <div className="text-center">
+          <div className="text-red-400 text-xl mb-4">No YouTube URL available</div>
+          <div className="text-gray-400 text-sm">
+            This lesson doesn't have a YouTube URL set.
+            <br />
+            Please add the YouTube URL from the course editor.
           </div>
         </div>
       </div>
     );
   }
   
-  if (!hasHLS && !hasMP4) {
+  // For uploaded videos, check if HLS or MP4 is available
+  if (!isYouTube && !hasHLS && !hasMP4) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center">
         <div className="text-center">
@@ -104,10 +119,12 @@ export default function VideoPlayerPage() {
       <div className="container mx-auto py-8">
         {/* Video Container */}
         <div className="w-full max-w-6xl mx-auto">
-          <HLSVideoPlayer
+          <VideoPlayerWrapper
+            videoType={videoData.videoType}
             hlsMasterPlaylist={videoData.hlsMasterPlaylist}
             hlsQualities={videoData.hlsQualities}
             videoUrls={videoData.videoUrls}
+            videoUrl={videoData.videoUrl}
             thumbnail={videoData.thumbnail}
             title={videoData.title}
             autoplay={false}
@@ -123,7 +140,12 @@ export default function VideoPlayerPage() {
           {videoData.description && (
             <p className="text-gray-400">{videoData.description}</p>
           )}
-          {videoData.originalWidth && videoData.originalHeight && (
+          {videoData.videoType === 'YOUTUBE' && (
+            <p className="text-gray-500 text-sm mt-2">
+              📺 YouTube Video
+            </p>
+          )}
+          {videoData.videoType === 'UPLOAD' && videoData.originalWidth && videoData.originalHeight && (
             <p className="text-gray-500 text-sm mt-2">
               {videoData.originalWidth}x{videoData.originalHeight} • {Math.round(videoData.videoDuration || 0)}s
             </p>

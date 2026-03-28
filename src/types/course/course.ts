@@ -92,7 +92,7 @@ export interface Lesson {
   // Video fields
   videoUrl?: string;
   videoUrls?: Record<string, string>; // Multiple quality URLs (legacy MP4)
-  videoType?: 'UPLOAD' | 'YOUTUBE';
+  videoType: 'UPLOAD' | 'YOUTUBE'; // Required field to determine player type
   thumbnail?: string;
   originalWidth?: number;
   originalHeight?: number;

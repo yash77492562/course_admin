@@ -139,6 +139,7 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
   // PDF Lecture Upload State
   const [showPDFUploader, setShowPDFUploader] = useState<{ moduleIndex: number; itemIndex: number } | null>(null);
   const [showPDFViewer, setShowPDFViewer] = useState<{ pdfUrl: string; password?: string; title: string } | null>(null);
+  const [showYouTubePreview, setShowYouTubePreview] = useState<{ videoUrl: string; title: string } | null>(null);
 
   const handleSave = async (status: CourseStatus = currentStatus) => {
     try {
@@ -362,62 +363,86 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
     moduleIndex: number,
     itemIndex: number,
     data: {
-      videoUrls: Record<string, string>;
-      thumbnailUrl: string;
+      videoUrls?: Record<string, string>;
+      thumbnailUrl?: string;
       masterPlaylistUrl?: string;
-      metadata: VideoMetadata;
+      metadata?: VideoMetadata;
+      videoType: 'UPLOAD' | 'YOUTUBE';
+      youtubeUrl?: string;
     }
   ) => {
-    console.log('=== VIDEO PROCESSING COMPLETE ===');
+    console.log('=== VIDEO COMPLETE ===');
     console.log('Module Index:', moduleIndex);
     console.log('Item Index:', itemIndex);
-    console.log('HLS Quality URLs:', data.videoUrls);
-    console.log('Master Playlist URL:', data.masterPlaylistUrl);
-    console.log('Thumbnail:', data.thumbnailUrl);
-    console.log('Metadata:', data.metadata);
+    console.log('Video Type:', data.videoType);
+    console.log('Data:', data);
 
     const updated = [...modules];
     const title = showVideoUploader?.title || 'Untitled Video';
 
-    const videoItem: VideoItem = {
-      id: `video_${Date.now()}`,
-      title,
-      contentType: 'VIDEO',
-      description: '',
-      videoUrl: 'processed', // Placeholder - video is processed and in R2
-      videoType: 'UPLOAD',
-      _r2VideoUrls: data.videoUrls, // HLS quality playlists
-      _r2MasterPlaylist: data.masterPlaylistUrl, // HLS master playlist
-      _r2Thumbnail: data.thumbnailUrl,
-      _r2Metadata: {
-        originalWidth: data.metadata.width,
-        originalHeight: data.metadata.height,
-        duration: data.metadata.duration,
-      },
-    };
-    
-    console.log('📦 Video item created:', videoItem);
-    console.log('📍 Updating module', moduleIndex, 'item', itemIndex);
-    console.log('📋 Current modules before update:', updated);
+    if (data.videoType === 'YOUTUBE') {
+      // YouTube video
+      const videoItem: VideoItem = {
+        id: `video_${Date.now()}`,
+        title,
+        contentType: 'VIDEO',
+        description: '',
+        videoUrl: data.youtubeUrl || '',
+        videoType: 'YOUTUBE',
+      };
+      
+      console.log('📺 YouTube video item created:', videoItem);
 
-    if (itemIndex >= updated[moduleIndex].items.length) {
-      updated[moduleIndex].items.push(videoItem);
-      console.log('➕ Pushed new item to module');
+      if (itemIndex >= updated[moduleIndex].items.length) {
+        updated[moduleIndex].items.push(videoItem);
+      } else {
+        updated[moduleIndex].items[itemIndex] = videoItem;
+      }
+
+      setModules(updated);
+      setShowVideoUploader(null);
+
+      success(
+        'YouTube Video Added!',
+        `YouTube video "${title}" has been added. It will be saved when you publish the course.`,
+        { duration: 5000 }
+      );
     } else {
-      updated[moduleIndex].items[itemIndex] = videoItem;
-      console.log('✏️ Replaced existing item in module');
+      // Uploaded video
+      const videoItem: VideoItem = {
+        id: `video_${Date.now()}`,
+        title,
+        contentType: 'VIDEO',
+        description: '',
+        videoUrl: 'processed', // Placeholder - video is processed and in R2
+        videoType: 'UPLOAD',
+        _r2VideoUrls: data.videoUrls, // HLS quality playlists
+        _r2MasterPlaylist: data.masterPlaylistUrl, // HLS master playlist
+        _r2Thumbnail: data.thumbnailUrl,
+        _r2Metadata: data.metadata ? {
+          originalWidth: data.metadata.width,
+          originalHeight: data.metadata.height,
+          duration: data.metadata.duration,
+        } : undefined,
+      };
+      
+      console.log('🎥 Upload video item created:', videoItem);
+
+      if (itemIndex >= updated[moduleIndex].items.length) {
+        updated[moduleIndex].items.push(videoItem);
+      } else {
+        updated[moduleIndex].items[itemIndex] = videoItem;
+      }
+
+      setModules(updated);
+      setShowVideoUploader(null);
+
+      success(
+        'Video Processed Successfully!',
+        `Video "${title}" has been processed with HLS streaming. It will be saved to database when you publish the course.`,
+        { duration: 5000 }
+      );
     }
-    
-    console.log('📋 Updated modules after update:', updated);
-
-    setModules(updated);
-    setShowVideoUploader(null);
-
-    success(
-      'Video Processed Successfully!',
-      `Video "${title}" has been processed with HLS streaming. It will be saved to database when you publish the course.`,
-      { duration: 5000 }
-    );
   };
 
   // PDF Upload Handler - NEW: Handles PDF lecture uploads
@@ -1041,18 +1066,21 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
                               item.contentType === 'VIDEO' && item.videoUrl && !item.videoUrl.startsWith('temp://') ? (
                                 <button
                                   onClick={() => {
-                                    const videoData = encodeURIComponent(JSON.stringify({
-                                      title: item.title,
-                                      videoUrl: item.videoUrl,
-                                      videoType: item.videoType || 'UPLOAD',
-                                      description: item.description || ''
-                                    }));
-                                    window.open(`/video-player/${item.id}?data=${videoData}`, '_blank');
+                                    // For YouTube videos, show preview modal (works for both saved and unsaved)
+                                    if (item.videoType === 'YOUTUBE') {
+                                      setShowYouTubePreview({
+                                        videoUrl: item.videoUrl,
+                                        title: item.title
+                                      });
+                                    } else {
+                                      // For uploaded videos, just open by ID (fetch from API)
+                                      window.open(`/video-player/${item.id}`, '_blank');
+                                    }
                                   }}
                                   className="flex-1 text-left border-none p-0 bg-transparent hover:text-blue-600 transition-colors cursor-pointer"
                                   style={{ color: '#64748b', fontSize: '0.9rem', lineHeight: '1.5' }}
                                 >
-                                  🎥 {item.title}
+                                  {item.videoType === 'YOUTUBE' ? '📺' : '🎥'} {item.title}
                                 </button>
                               ) : item.videoUrl?.startsWith('temp://') ? (
                                 <span className="flex-1 text-orange-500" style={{ fontSize: '0.9rem', lineHeight: '1.5' }}>
@@ -1300,6 +1328,55 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
                 password={showPDFViewer.password}
                 title={showPDFViewer.title}
               />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* YouTube Preview Modal - NEW: Preview YouTube videos before publishing */}
+      {showYouTubePreview && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl m-4">
+            <div className="flex items-center justify-between p-4 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-900">
+                📺 {showYouTubePreview.title}
+              </h3>
+              <button
+                onClick={() => setShowYouTubePreview(null)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="p-4">
+              <div className="w-full" style={{ aspectRatio: '16/9' }}>
+                <iframe
+                  src={(() => {
+                    // Convert YouTube URL to embed format
+                    let videoId = '';
+                    const url = showYouTubePreview.videoUrl;
+                    
+                    if (url.includes('youtube.com/watch?v=')) {
+                      videoId = url.split('v=')[1].split('&')[0];
+                    } else if (url.includes('youtu.be/')) {
+                      videoId = url.split('youtu.be/')[1].split('?')[0];
+                    } else if (url.includes('youtube.com/embed/') || url.includes('youtube-nocookie.com/embed/')) {
+                      videoId = url.split('/embed/')[1].split('?')[0];
+                    }
+                    
+                    return `https://www.youtube-nocookie.com/embed/${videoId}`;
+                  })()}
+                  title={showYouTubePreview.title}
+                  className="w-full h-full rounded-lg"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                />
+              </div>
+              <div className="mt-4 text-sm text-gray-600">
+                This is a preview. The video will be saved to the database when you publish the course.
+              </div>
             </div>
           </div>
         </div>

@@ -15,10 +15,12 @@ interface VideoUploaderWithProcessingProps {
   lessonId: string;
   lessonName: string;
   onComplete: (data: {
-    videoUrls: Record<string, string>;
-    thumbnailUrl: string;
+    videoUrls?: Record<string, string>;
+    thumbnailUrl?: string;
     masterPlaylistUrl?: string;
-    metadata: VideoMetadata;
+    metadata?: VideoMetadata;
+    videoType: 'UPLOAD' | 'YOUTUBE';
+    youtubeUrl?: string;
   }) => void;
   onCancel: () => void;
 }
@@ -29,8 +31,10 @@ export function VideoUploaderWithProcessing({
   onComplete,
   onCancel
 }: VideoUploaderWithProcessingProps) {
+  const [uploadType, setUploadType] = useState<'upload' | 'youtube'>('upload');
   const [step, setStep] = useState<'upload' | 'quality-select' | 'processing'>('upload');
   const [file, setFile] = useState<File | null>(null);
+  const [youtubeUrl, setYoutubeUrl] = useState<string>('');
   const [uploadId, setUploadId] = useState<string>(''); // Changed from tempPath
   const [availableQualities, setAvailableQualities] = useState<string[]>([]);
   const [videoMetadata, setVideoMetadata] = useState<VideoMetadata | null>(null);
@@ -221,6 +225,7 @@ export function VideoUploaderWithProcessing({
               thumbnailUrl: status.thumbnailUrl,
               masterPlaylistUrl: status.masterPlaylistUrl,
               metadata: videoMetadata,
+              videoType: 'UPLOAD' as const,
             };
             
             console.log('📦 Data being passed to onComplete:', dataToPass);
@@ -276,6 +281,30 @@ export function VideoUploaderWithProcessing({
     onCancel();
   };
 
+  const handleYouTubeSubmit = async () => {
+    if (!youtubeUrl.trim()) {
+      setError('Please enter a YouTube URL');
+      return;
+    }
+
+    // Validate YouTube URL
+    const youtubeRegex = /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+/;
+    if (!youtubeRegex.test(youtubeUrl)) {
+      setError('Invalid YouTube URL');
+      showError('Invalid URL', 'Please enter a valid YouTube URL');
+      return;
+    }
+
+    console.log('📺 YouTube URL validated:', youtubeUrl);
+    success('YouTube Video Ready', 'YouTube video will be saved when you publish the course');
+
+    // Call onComplete with YouTube data (don't save to backend yet)
+    onComplete({
+      videoType: 'YOUTUBE',
+      youtubeUrl: youtubeUrl.trim(),
+    });
+  };
+
   return (
     <>
       {/* Upload Step */}
@@ -284,6 +313,39 @@ export function VideoUploaderWithProcessing({
           <h3 className="text-lg font-semibold text-gray-900 mb-4">
             Upload Video
           </h3>
+
+          {/* Upload Type Selection */}
+          <div className="flex gap-4 mb-6">
+            <button
+              onClick={() => setUploadType('upload')}
+              className={`flex-1 p-4 border-2 rounded-lg transition-colors ${
+                uploadType === 'upload'
+                  ? 'border-blue-500 bg-blue-50 text-blue-700'
+                  : 'border-gray-300 hover:border-gray-400'
+              }`}
+            >
+              <div className="text-center">
+                <div className="text-2xl mb-2">📁</div>
+                <div className="font-medium">Upload Video</div>
+                <div className="text-sm text-gray-500">Upload from your device</div>
+              </div>
+            </button>
+            
+            <button
+              onClick={() => setUploadType('youtube')}
+              className={`flex-1 p-4 border-2 rounded-lg transition-colors ${
+                uploadType === 'youtube'
+                  ? 'border-red-500 bg-red-50 text-red-700'
+                  : 'border-gray-300 hover:border-gray-400'
+              }`}
+            >
+              <div className="text-center">
+                <div className="text-2xl mb-2">📺</div>
+                <div className="font-medium">YouTube Link</div>
+                <div className="text-sm text-gray-500">Embed from YouTube</div>
+              </div>
+            </button>
+          </div>
 
           {error && (
             <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
@@ -296,7 +358,7 @@ export function VideoUploaderWithProcessing({
             </div>
           )}
 
-          {uploading && (
+          {uploading && uploadType === 'upload' && (
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
               <div className="flex items-center gap-2">
                 <svg className="w-5 h-5 text-blue-600 animate-spin" fill="none" viewBox="0 0 24 24">
@@ -308,45 +370,87 @@ export function VideoUploaderWithProcessing({
             </div>
           )}
 
-          <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="video/*"
-              onChange={handleFileSelect}
-              className="hidden"
-              disabled={uploading}
-            />
-            
-            <svg className="mx-auto h-12 w-12 text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-            </svg>
+          {uploadType === 'upload' ? (
+            <>
+              <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="video/*"
+                  onChange={handleFileSelect}
+                  className="hidden"
+                  disabled={uploading}
+                />
+                
+                <svg className="mx-auto h-12 w-12 text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                </svg>
 
-            <p className="text-sm text-gray-600 mb-2">
-              Click to upload or drag and drop
-            </p>
-            <p className="text-xs text-gray-500 mb-4">
-              MP4, WebM, or MOV (minimum 460p)
-            </p>
+                <p className="text-sm text-gray-600 mb-2">
+                  Click to upload or drag and drop
+                </p>
+                <p className="text-xs text-gray-500 mb-4">
+                  MP4, WebM, or MOV (minimum 460p)
+                </p>
 
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={uploading}
-              className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {uploading ? 'Analyzing...' : 'Select Video'}
-            </button>
-          </div>
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                  className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {uploading ? 'Analyzing...' : 'Select Video'}
+                </button>
+              </div>
 
-          <div className="mt-6 flex justify-end">
-            <button
-              onClick={handleCancel}
-              disabled={uploading}
-              className="border border-gray-300 text-gray-700 px-4 py-2 rounded-lg font-medium hover:bg-gray-50 transition-colors disabled:opacity-50"
-            >
-              Cancel
-            </button>
-          </div>
+              <div className="mt-6 flex justify-end">
+                <button
+                  onClick={handleCancel}
+                  disabled={uploading}
+                  className="border border-gray-300 text-gray-700 px-4 py-2 rounded-lg font-medium hover:bg-gray-50 transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    YouTube URL *
+                  </label>
+                  <input
+                    type="url"
+                    value={youtubeUrl}
+                    onChange={(e) => setYoutubeUrl(e.target.value)}
+                    placeholder="https://www.youtube.com/watch?v=..."
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
+                    disabled={uploading}
+                  />
+                  <div className="mt-1 text-xs text-gray-500">
+                    Paste the YouTube video URL here
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 flex justify-end gap-3">
+                <button
+                  onClick={handleCancel}
+                  disabled={uploading}
+                  className="border border-gray-300 text-gray-700 px-4 py-2 rounded-lg font-medium hover:bg-gray-50 transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleYouTubeSubmit}
+                  disabled={uploading || !youtubeUrl.trim()}
+                  className="bg-red-500 hover:bg-red-600 text-white px-6 py-2 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {uploading ? 'Adding...' : 'Add YouTube Video'}
+                </button>
+              </div>
+            </>
+          )}
         </div>
       )}
 

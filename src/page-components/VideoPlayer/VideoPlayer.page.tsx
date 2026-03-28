@@ -5,8 +5,8 @@ import { useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 
 // Dynamic import to prevent SSR issues with Video.js
-const HLSVideoPlayer = dynamic(
-  () => import('@/components/features/VideoPlayer/HLSVideoPlayer').then(mod => ({ default: mod.HLSVideoPlayer })),
+const VideoPlayerWrapper = dynamic(
+  () => import('@/components/features/VideoPlayer').then(mod => ({ default: mod.VideoPlayerWrapper })),
   { ssr: false }
 );
 
@@ -20,6 +20,8 @@ interface VideoData {
   videoType: 'UPLOAD' | 'YOUTUBE';
   description?: string;
   videoUrls?: Record<string, string>; // Multiple quality URLs
+  hlsMasterPlaylist?: string; // HLS master playlist
+  hlsQualities?: Record<string, string>; // HLS quality playlists
   thumbnail?: string; // Thumbnail URL
 }
 
@@ -28,46 +30,6 @@ export function VideoPlayerPage({ videoId }: VideoPlayerPageProps) {
   const [videoData, setVideoData] = useState<VideoData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const [volume, setVolume] = useState(1);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-
-  // Convert YouTube URL to cleanest possible embed URL
-  const convertToCleanEmbedUrl = (youtubeUrl: string): string => {
-    let videoId = '';
-    
-    if (youtubeUrl.includes('youtube.com/watch?v=')) {
-      videoId = youtubeUrl.split('v=')[1].split('&')[0];
-    } else if (youtubeUrl.includes('youtu.be/')) {
-      videoId = youtubeUrl.split('youtu.be/')[1].split('?')[0];
-    } else if (youtubeUrl.includes('youtube.com/embed/') || youtubeUrl.includes('youtube-nocookie.com/embed/')) {
-      // Extract video ID from embed URL
-      videoId = youtubeUrl.split('/embed/')[1].split('?')[0];
-    } else {
-      // Try to extract video ID from any YouTube URL
-      const videoIdMatch = youtubeUrl.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/);
-      if (videoIdMatch) {
-        videoId = videoIdMatch[1];
-      }
-    }
-
-    // Use most aggressive branding removal - remove ALL controls and UI
-    // controls=0: Remove all YouTube controls
-    // modestbranding=1: Remove YouTube logo
-    // rel=0: Only related videos from same channel
-    // showinfo=0: Hide title/uploader (deprecated but may work)
-    // iv_load_policy=3: Disable annotations
-    // cc_load_policy=0: Disable captions
-    // disablekb=1: Disable keyboard shortcuts
-    // fs=0: Disable fullscreen button
-    // playsinline=1: Play inline on mobile
-    // autoplay=0: Don't autoplay
-    // loop=1: Loop the video to prevent related videos
-    // playlist=${videoId}: Required for loop to work
-    return `https://www.youtube-nocookie.com/embed/${videoId}?controls=0&modestbranding=1&rel=0&showinfo=0&iv_load_policy=3&cc_load_policy=0&disablekb=1&fs=0&playsinline=1&autoplay=0&loop=1&playlist=${videoId}`;
-  };
 
   useEffect(() => {
     const loadVideoData = async () => {
@@ -115,6 +77,8 @@ export function VideoPlayerPage({ videoId }: VideoPlayerPageProps) {
           videoType: lesson.videoType || 'UPLOAD',
           description: lesson.description || '',
           videoUrls: lesson.videoUrls,
+          hlsMasterPlaylist: lesson.hlsMasterPlaylist,
+          hlsQualities: lesson.hlsQualities,
           thumbnail: lesson.thumbnail
         });
         
@@ -136,22 +100,6 @@ export function VideoPlayerPage({ videoId }: VideoPlayerPageProps) {
     } else {
       window.location.href = '/';
     }
-  };
-
-  const toggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen();
-      setIsFullscreen(true);
-    } else {
-      document.exitFullscreen();
-      setIsFullscreen(false);
-    }
-  };
-
-  const formatTime = (time: number) => {
-    const minutes = Math.floor(time / 60);
-    const seconds = Math.floor(time % 60);
-    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   };
 
   if (loading) {
@@ -209,84 +157,17 @@ export function VideoPlayerPage({ videoId }: VideoPlayerPageProps) {
         {/* Video Player Section */}
         <div className="flex-1 bg-black flex items-center justify-center p-4">
           <div className="w-full max-w-6xl">
-            {/* Video Container */}
-            <div className="relative bg-black rounded-lg overflow-hidden" style={{ paddingBottom: '56.25%' }}>
-              {videoData.videoType === 'YOUTUBE' ? (
-                <div className="absolute top-0 left-0 w-full h-full bg-black youtube-container">
-                  <iframe
-                    src={convertToCleanEmbedUrl(videoData.videoUrl)}
-                    title={videoData.title}
-                    className="absolute top-0 left-0 w-full h-full youtube-iframe"
-                    frameBorder="0"
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                    allowFullScreen
-                    style={{ 
-                      backgroundColor: '#000',
-                      border: 'none',
-                      outline: 'none'
-                    }}
-                  />
-                  
-                  {/* Custom play button overlay */}
-                  <div className="youtube-custom-controls">
-                    <button 
-                      className="youtube-play-button"
-                      onClick={() => {
-                        // Click on the iframe to start playing
-                        const iframe = document.querySelector('.youtube-iframe') as HTMLIFrameElement;
-                        if (iframe) {
-                          iframe.click();
-                        }
-                      }}
-                    >
-                      <svg className="w-16 h-16 text-white" fill="currentColor" viewBox="0 0 24 24">
-                        <path d="M8 5v14l11-7z"/>
-                      </svg>
-                    </button>
-                  </div>
-                  
-                  {/* Precise overlays to hide any remaining YouTube UI */}
-                  <div className="youtube-overlay-container">
-                    {/* Hide any title that might appear */}
-                    <div className="youtube-title-overlay"></div>
-                    
-                    {/* Hide any bottom UI elements */}
-                    <div className="youtube-bottom-overlay"></div>
-                  </div>
-                </div>
-              ) : (
-                // For uploaded videos, use HLS player with quality controls
-                videoData.videoUrls && Object.keys(videoData.videoUrls).length > 0 ? (
-                  <HLSVideoPlayer
-                    videoUrls={videoData.videoUrls}
-                    thumbnail={videoData.thumbnail}
-                    title={videoData.title}
-                    className="absolute top-0 left-0 w-full h-full"
-                  />
-                ) : videoData.videoUrl?.startsWith('blob:') ? (
-                  <video
-                    src={videoData.videoUrl}
-                    title={videoData.title}
-                    className="absolute top-0 left-0 w-full h-full object-contain"
-                    controls
-                    autoPlay={false}
-                    style={{ backgroundColor: '#000' }}
-                  >
-                    Your browser does not support the video tag.
-                  </video>
-                ) : (
-                  <iframe
-                    src={videoData.videoUrl}
-                    title={videoData.title}
-                    className="absolute top-0 left-0 w-full h-full"
-                    frameBorder="0"
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
-                    allowFullScreen
-                    style={{ backgroundColor: '#000' }}
-                  />
-                )
-              )}
-            </div>
+            <VideoPlayerWrapper
+              videoType={videoData.videoType}
+              hlsMasterPlaylist={videoData.hlsMasterPlaylist}
+              hlsQualities={videoData.hlsQualities}
+              videoUrls={videoData.videoUrls}
+              videoUrl={videoData.videoUrl}
+              thumbnail={videoData.thumbnail}
+              title={videoData.title}
+              autoplay={false}
+              className="rounded-lg overflow-hidden"
+            />
           </div>
         </div>
 
@@ -349,124 +230,4 @@ export function VideoPlayerPage({ videoId }: VideoPlayerPageProps) {
       </div>
     </div>
   );
-}
-
-// Custom CSS for completely clean YouTube player
-const youtubeCleanStyles = `
-  .youtube-container {
-    position: relative;
-    overflow: hidden;
-    border-radius: 12px;
-    background: #000;
-  }
-  
-  .youtube-iframe {
-    border: none !important;
-    outline: none !important;
-    pointer-events: auto;
-  }
-  
-  /* Custom play button */
-  .youtube-custom-controls {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 15;
-    pointer-events: none;
-  }
-  
-  .youtube-play-button {
-    background: rgba(0, 0, 0, 0.7);
-    border: none;
-    border-radius: 50%;
-    width: 80px;
-    height: 80px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    pointer-events: auto;
-    transition: all 0.3s ease;
-    backdrop-filter: blur(10px);
-  }
-  
-  .youtube-play-button:hover {
-    background: rgba(0, 0, 0, 0.9);
-    transform: scale(1.1);
-  }
-  
-  /* Hide play button when video is playing */
-  .youtube-container:hover .youtube-play-button {
-    opacity: 0;
-    pointer-events: none;
-  }
-  
-  .youtube-overlay-container {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    pointer-events: none;
-    z-index: 10;
-  }
-  
-  /* Hide any title that might appear at top */
-  .youtube-title-overlay {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 80px;
-    background: #000;
-    pointer-events: none;
-  }
-  
-  /* Hide any bottom UI elements */
-  .youtube-bottom-overlay {
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 100px;
-    background: #000;
-    pointer-events: none;
-  }
-  
-  /* Ensure the video area remains clickable for play/pause */
-  .youtube-container::after {
-    content: '';
-    position: absolute;
-    top: 80px;
-    left: 0;
-    right: 0;
-    bottom: 100px;
-    pointer-events: auto;
-    z-index: 5;
-    background: transparent;
-  }
-  
-  /* Reduce overlay opacity on hover to allow some interaction */
-  .youtube-container:hover .youtube-title-overlay,
-  .youtube-container:hover .youtube-bottom-overlay {
-    opacity: 0.1;
-    transition: opacity 0.3s ease;
-  }
-`;
-
-// Inject styles
-if (typeof document !== 'undefined') {
-  const existingStyle = document.getElementById('youtube-clean-styles');
-  if (!existingStyle) {
-    const styleSheet = document.createElement('style');
-    styleSheet.id = 'youtube-clean-styles';
-    styleSheet.type = 'text/css';
-    styleSheet.innerText = youtubeCleanStyles;
-    document.head.appendChild(styleSheet);
-  }
 }
