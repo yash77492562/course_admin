@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import videojs from 'video.js';
 import 'video.js/dist/video-js.css';
+import 'videojs-contrib-quality-levels';
 
 interface HLSVideoPlayerProps {
   hlsMasterPlaylist?: string; // HLS master playlist URL (if available)
@@ -118,70 +119,7 @@ export function HLSVideoPlayer({
             player.muted(false);
             console.log('🔊 Video unmuted');
           }
-        }, 1000); // Increased delay to 1 second
-        
-        // Add quality selector after player is ready
-        const qualityLevels = (player as any).qualityLevels?.();
-        if (qualityLevels && qualityLevels.length > 0) {
-          console.log('📺 Setting up quality selector...');
-          
-          // Create quality menu button
-          const MenuButton = videojs.getComponent('MenuButton');
-          const MenuItem = videojs.getComponent('MenuItem');
-          
-          class QualityMenuItem extends MenuItem {
-            constructor(player: any, options: any) {
-              super(player, options);
-              this.selectable = true;
-              this.selected(options.selected);
-            }
-            
-            handleClick() {
-              const qualityLevels = (this.player() as any).qualityLevels();
-              for (let i = 0; i < qualityLevels.length; i++) {
-                qualityLevels[i].enabled = (i === this.options_.index);
-              }
-            }
-          }
-          
-          class QualityMenuButton extends MenuButton {
-            constructor(player: any, options: any) {
-              super(player, options);
-              this.controlText('Quality');
-            }
-            
-            createItems() {
-              const qualityLevels = (this.player() as any).qualityLevels();
-              const items = [];
-              
-              // Add "Auto" option
-              items.push(new QualityMenuItem(this.player(), {
-                label: 'Auto',
-                index: -1,
-                selected: true
-              }));
-              
-              // Add quality options
-              for (let i = 0; i < qualityLevels.length; i++) {
-                const level = qualityLevels[i];
-                items.push(new QualityMenuItem(this.player(), {
-                  label: level.height + 'p',
-                  index: i,
-                  selected: false
-                }));
-              }
-              
-              return items;
-            }
-          }
-          
-          videojs.registerComponent('QualityMenuButton', QualityMenuButton);
-          
-          // Add quality button to control bar
-          player.getChild('controlBar')?.addChild('QualityMenuButton', {}, 
-            player.getChild('controlBar')?.children().length - 1
-          );
-        }
+        }, 1000);
       });
 
       // Set source
@@ -191,6 +129,197 @@ export function HLSVideoPlayer({
       });
 
       playerRef.current = player;
+
+      // Add quality selector after source is loaded and quality levels are available
+      player.on('loadedmetadata', () => {
+        console.log('📊 Video metadata loaded');
+        
+        // Initialize quality levels plugin
+        const qualityLevels = player.qualityLevels();
+        
+        console.log('🔍 Quality Levels Object:', qualityLevels);
+        console.log('🔍 Quality Levels Length:', qualityLevels ? qualityLevels.length : 'undefined');
+        
+        if (qualityLevels && qualityLevels.length > 0) {
+          console.log('📺 Available quality levels:', qualityLevels.length);
+          
+          // Log available qualities with all details
+          for (let i = 0; i < qualityLevels.length; i++) {
+            const level = qualityLevels[i];
+            console.log(`   Quality ${i}:`, {
+              height: level.height,
+              width: level.width,
+              bitrate: level.bitrate,
+              enabled: level.enabled,
+              id: level.id
+            });
+          }
+          
+          // Listen for quality level changes
+          qualityLevels.on('change', () => {
+            console.log('🔄 Quality level changed');
+            const enabledLevels = [];
+            for (let i = 0; i < qualityLevels.length; i++) {
+              const level = qualityLevels[i];
+              if (level.enabled) {
+                enabledLevels.push(`${level.height}p (${level.bitrate} bps)`);
+              }
+            }
+            console.log(`   Enabled qualities: ${enabledLevels.join(', ')}`);
+          });
+          
+          // Create custom quality selector button
+          const MenuButton = videojs.getComponent('MenuButton');
+          const MenuItem = videojs.getComponent('MenuItem');
+          
+          // Custom menu item for each quality
+          class QualityMenuItem extends MenuItem {
+            constructor(player: videojs.Player, options: any) {
+              super(player, options);
+              this.selectable = true;
+              this.selected(options.selected || false);
+            }
+            
+            handleClick() {
+              const qualityLevels = this.player().qualityLevels();
+              const parent = this.options_.parent;
+              
+              if (this.options_.value === 'auto') {
+                // Enable all qualities for auto mode
+                for (let i = 0; i < qualityLevels.length; i++) {
+                  qualityLevels[i].enabled = true;
+                }
+                console.log('🔄 Quality set to: Auto (adaptive streaming enabled)');
+              } else {
+                // Get the selected quality height
+                const selectedHeight = qualityLevels[this.options_.value].height;
+                
+                // Enable all quality levels with the same height, disable others
+                for (let i = 0; i < qualityLevels.length; i++) {
+                  qualityLevels[i].enabled = (qualityLevels[i].height === selectedHeight);
+                }
+                console.log('🔄 Quality set to:', selectedHeight + 'p');
+              }
+              
+              // Update selected state for all menu items
+              if (parent && parent.children) {
+                const menuItems = parent.children();
+                for (let i = 0; i < menuItems.length; i++) {
+                  const item = menuItems[i];
+                  if (item && typeof item.selected === 'function') {
+                    item.selected(item.options_.value === this.options_.value);
+                  }
+                }
+              }
+              
+              // Update button label
+              if (parent && typeof parent.updateLabel === 'function') {
+                parent.updateLabel();
+              }
+            }
+          }
+          
+          // Custom menu button for quality selector
+          class QualityMenuButton extends MenuButton {
+            constructor(player: videojs.Player, options: any) {
+              super(player, options);
+              this.addClass('vjs-quality-selector');
+              this.controlText('Quality');
+              
+              // Update button label when quality changes
+              const qualityLevels = player.qualityLevels();
+              qualityLevels.on('change', () => {
+                this.updateLabel();
+              });
+            }
+            
+            updateLabel() {
+              const qualityLevels = this.player().qualityLevels();
+              let currentQuality = 'Auto';
+              
+              // Count enabled qualities
+              let enabledCount = 0;
+              let enabledHeight = -1;
+              
+              for (let i = 0; i < qualityLevels.length; i++) {
+                if (qualityLevels[i].enabled) {
+                  enabledCount++;
+                  if (enabledHeight === -1) {
+                    enabledHeight = qualityLevels[i].height;
+                  }
+                }
+              }
+              
+              // If not all qualities are enabled, show the specific quality
+              if (enabledCount < qualityLevels.length && enabledHeight > 0) {
+                currentQuality = enabledHeight + 'p';
+              }
+              
+              // Update button text
+              const labelEl = this.el().querySelector('.vjs-icon-placeholder');
+              if (labelEl) {
+                labelEl.textContent = currentQuality;
+              }
+            }
+            
+            createItems() {
+              const qualityLevels = this.player().qualityLevels();
+              const items = [];
+              
+              // Add "Auto" option (default)
+              items.push(new QualityMenuItem(this.player(), {
+                label: 'Auto',
+                value: 'auto',
+                selected: true,
+                parent: this
+              }));
+              
+              // Group quality levels by height to avoid duplicates
+              const qualityMap = new Map<number, number>();
+              for (let i = 0; i < qualityLevels.length; i++) {
+                const height = qualityLevels[i].height;
+                if (!qualityMap.has(height)) {
+                  qualityMap.set(height, i);
+                }
+              }
+              
+              // Sort by height (descending) and create menu items
+              const sortedHeights = Array.from(qualityMap.keys()).sort((a, b) => b - a);
+              
+              sortedHeights.forEach(height => {
+                const index = qualityMap.get(height)!;
+                items.push(new QualityMenuItem(this.player(), {
+                  label: height + 'p',
+                  value: index,
+                  selected: false,
+                  parent: this
+                }));
+              });
+              
+              return items;
+            }
+            
+            buildCSSClass() {
+              return `vjs-quality-selector ${super.buildCSSClass()}`;
+            }
+          }
+          
+          // Register the component
+          videojs.registerComponent('QualityMenuButton', QualityMenuButton);
+          
+          // Add quality button to control bar (before fullscreen button)
+          const controlBar = player.getChild('controlBar');
+          if (controlBar) {
+            const fullscreenToggle = controlBar.getChild('fullscreenToggle');
+            const fullscreenIndex = controlBar.children().indexOf(fullscreenToggle);
+            
+            controlBar.addChild('QualityMenuButton', {}, fullscreenIndex);
+            console.log('✅ Quality selector added to control bar');
+          }
+        } else {
+          console.log('⚠️ No quality levels available');
+        }
+      });
 
       // Handle errors
       player.on('error', (error: any) => {
@@ -219,21 +348,6 @@ export function HLSVideoPlayer({
       player.on('loadeddata', () => {
         console.log('📥 Video data loaded');
       });
-
-      // Log quality changes for HLS
-      if (hlsMasterPlaylist || hlsQualities) {
-        player.on('loadedmetadata', () => {
-          console.log('📊 Video metadata loaded');
-          const qualityLevels = (player as any).qualityLevels?.();
-          if (qualityLevels) {
-            console.log('📺 Available quality levels:', qualityLevels.length);
-            for (let i = 0; i < qualityLevels.length; i++) {
-              const level = qualityLevels[i];
-              console.log(`   Quality ${i}:`, level.height + 'p', level.bitrate);
-            }
-          }
-        });
-      }
     }
 
     // Cleanup on unmount
@@ -344,6 +458,33 @@ export function HLSVideoPlayer({
           width: 100% !important;
           height: 100% !important;
           object-fit: contain;
+        }
+        
+        /* Quality Selector Styles */
+        .vjs-quality-selector .vjs-icon-placeholder::before {
+          content: 'HD';
+          font-size: 14px;
+          line-height: 1.8;
+          font-weight: bold;
+        }
+        
+        .vjs-quality-selector .vjs-menu {
+          min-width: 100px;
+        }
+        
+        .vjs-quality-selector .vjs-menu-item {
+          text-align: center;
+          padding: 8px 16px;
+          font-size: 14px;
+        }
+        
+        .vjs-quality-selector .vjs-menu-item.vjs-selected {
+          background-color: var(--vjs-theme-city--primary);
+          color: white;
+        }
+        
+        .vjs-quality-selector .vjs-menu-item:hover {
+          background-color: rgba(14, 165, 233, 0.2);
         }
       `}</style>
     </div>
