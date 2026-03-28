@@ -104,6 +104,19 @@ export function HLSVideoPlayer({
           vhs: {
             overrideNative: true,
             enableLowInitialPlaylist: true,
+            // Optimize chunk loading - only buffer what's needed
+            bandwidth: 4194304, // Initial bandwidth estimate (4 Mbps)
+            limitRenditionByPlayerDimensions: false,
+            smoothQualityChange: true,
+            // Buffer settings for better quality switching
+            maxPlaylistRetries: 3,
+            experimentalBufferBasedABR: true,
+            // Limit forward buffer to 30 seconds (3 chunks at 10s each)
+            maxMaxBufferLength: 30,
+            maxBufferLength: 30,
+            maxBufferSize: 60 * 1000 * 1000, // 60 MB max buffer
+            // Fast quality switching
+            fastQualityChange: true,
           },
           nativeVideoTracks: false,
           nativeAudioTracks: false,
@@ -183,6 +196,11 @@ export function HLSVideoPlayer({
             handleClick() {
               const qualityLevels = this.player().qualityLevels();
               const parent = this.options_.parent;
+              const player = this.player();
+              
+              // Save current time before switching
+              const currentTime = player.currentTime();
+              const wasPaused = player.paused();
               
               if (this.options_.value === 'auto') {
                 // Enable all qualities for auto mode
@@ -200,6 +218,18 @@ export function HLSVideoPlayer({
                 }
                 console.log('🔄 Quality set to:', selectedHeight + 'p');
               }
+              
+              // Resume from saved position after a short delay
+              setTimeout(() => {
+                if (player && !player.isDisposed()) {
+                  player.currentTime(currentTime);
+                  if (!wasPaused) {
+                    player.play().catch((err: Error) => {
+                      console.warn('⚠️ Autoplay after quality change failed:', err);
+                    });
+                  }
+                }
+              }, 100);
               
               // Update selected state for all menu items
               if (parent && parent.children) {
@@ -231,6 +261,9 @@ export function HLSVideoPlayer({
               qualityLevels.on('change', () => {
                 this.updateLabel();
               });
+              
+              // Set initial label
+              setTimeout(() => this.updateLabel(), 100);
             }
             
             updateLabel() {
@@ -255,11 +288,14 @@ export function HLSVideoPlayer({
                 currentQuality = enabledHeight + 'p';
               }
               
-              // Update button text
-              const labelEl = this.el().querySelector('.vjs-icon-placeholder');
-              if (labelEl) {
-                labelEl.textContent = currentQuality;
+              // Update button text - use textContent instead of icon placeholder
+              const controlTextEl = this.el().querySelector('.vjs-control-text');
+              if (controlTextEl) {
+                controlTextEl.textContent = currentQuality;
               }
+              
+              // Also update the button's aria-label
+              this.el().setAttribute('aria-label', `Quality: ${currentQuality}`);
             }
             
             createItems() {
@@ -461,15 +497,34 @@ export function HLSVideoPlayer({
         }
         
         /* Quality Selector Styles */
-        .vjs-quality-selector .vjs-icon-placeholder::before {
-          content: 'HD';
-          font-size: 14px;
-          line-height: 1.8;
-          font-weight: bold;
+        .vjs-quality-selector {
+          min-width: 60px;
+        }
+        
+        .vjs-quality-selector .vjs-control-text {
+          display: inline-block !important;
+          position: relative !important;
+          clip: auto !important;
+          width: auto !important;
+          height: auto !important;
+          padding: 0 8px;
+          font-size: 13px;
+          font-weight: 600;
+          line-height: 3em;
+          color: white;
+        }
+        
+        .vjs-quality-selector .vjs-icon-placeholder {
+          display: none !important;
+        }
+        
+        .vjs-quality-selector button {
+          min-width: 60px;
         }
         
         .vjs-quality-selector .vjs-menu {
           min-width: 100px;
+          bottom: 100%;
         }
         
         .vjs-quality-selector .vjs-menu-item {
