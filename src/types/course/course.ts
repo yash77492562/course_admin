@@ -91,12 +91,16 @@ export interface Lesson {
   
   // Video fields
   videoUrl?: string;
-  videoUrls?: Record<string, string>; // Multiple quality URLs
+  videoUrls?: Record<string, string>; // Multiple quality URLs (legacy MP4)
   videoType?: 'UPLOAD' | 'YOUTUBE';
   thumbnail?: string;
   originalWidth?: number;
   originalHeight?: number;
   videoDuration?: number;
+  
+  // HLS streaming fields
+  hlsMasterPlaylist?: string; // HLS master playlist URL
+  hlsQualities?: Record<string, string>; // HLS quality playlists per quality
   
   // PDF fields
   pdfUrl?: string;

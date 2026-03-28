@@ -58,6 +58,47 @@ export default function VideoPlayerPage() {
   console.log('📹 HLS Qualities:', videoData.hlsQualities);
   console.log('📹 Video URLs:', videoData.videoUrls);
 
+  // Check if video has any playable source
+  const hasHLS = videoData.hlsMasterPlaylist || (videoData.hlsQualities && Object.keys(videoData.hlsQualities).length > 0);
+  const hasMP4 = videoData.videoUrls && Object.keys(videoData.videoUrls).length > 0;
+  
+  // Special case: video was processed but HLS data wasn't saved
+  const isProcessedButMissingHLS = videoData.videoUrl === 'processed' && !hasHLS && !hasMP4;
+  
+  if (isProcessedButMissingHLS) {
+    return (
+      <div className="min-h-screen bg-black flex items-center justify-center">
+        <div className="text-center max-w-md">
+          <div className="text-yellow-400 text-xl mb-4">⚠️ Video Processing Incomplete</div>
+          <div className="text-gray-400 text-sm space-y-2">
+            <p>This video was processed but the streaming data wasn't saved to the database.</p>
+            <p className="font-semibold text-white mt-4">To fix this:</p>
+            <ol className="text-left list-decimal list-inside space-y-1 mt-2">
+              <li>Go to the course editor</li>
+              <li>Re-upload the video</li>
+              <li>Click "Publish" to save the HLS streaming data</li>
+            </ol>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  
+  if (!hasHLS && !hasMP4) {
+    return (
+      <div className="min-h-screen bg-black flex items-center justify-center">
+        <div className="text-center">
+          <div className="text-red-400 text-xl mb-4">No video source available</div>
+          <div className="text-gray-400 text-sm">
+            This lesson doesn't have any video uploaded yet.
+            <br />
+            Please upload and publish the video from the course editor.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-black">
       <div className="container mx-auto py-8">

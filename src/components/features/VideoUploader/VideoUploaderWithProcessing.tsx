@@ -17,6 +17,7 @@ interface VideoUploaderWithProcessingProps {
   onComplete: (data: {
     videoUrls: Record<string, string>;
     thumbnailUrl: string;
+    masterPlaylistUrl?: string;
     metadata: VideoMetadata;
   }) => void;
   onCancel: () => void;

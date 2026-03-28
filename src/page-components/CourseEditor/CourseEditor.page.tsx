@@ -87,6 +87,16 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
           videoUrl: lesson.videoUrl || '',
           videoType: (lesson.videoType as 'UPLOAD' | 'YOUTUBE') || 'UPLOAD',
           description: lesson.description || '',
+          // Load existing HLS data from database
+          _r2VideoUrls: lesson.hlsQualities as Record<string, string> | undefined,
+          _r2MasterPlaylist: lesson.hlsMasterPlaylist,
+          _r2Thumbnail: lesson.thumbnail,
+          _r2Metadata: lesson.originalWidth && lesson.originalHeight && lesson.videoDuration ? {
+            originalWidth: lesson.originalWidth,
+            originalHeight: lesson.originalHeight,
+            duration: lesson.videoDuration,
+          } : undefined,
+          // PDF fields
           pdfUrl: lesson.pdfUrl,
           pdfPassword: lesson.pdfPassword,
           isPasswordProtected: lesson.isPasswordProtected || false
@@ -179,7 +189,7 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
             console.log('   item._r2Thumbnail:', item._r2Thumbnail);
             console.log('   item._r2Metadata:', item._r2Metadata);
             
-            return {
+            const lessonPayload = {
               title: item.title,
               description: item.description || `Lesson about ${item.title}`,
               duration: '1 hour',
@@ -203,6 +213,10 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
               pdfPassword: item.pdfPassword,
               isPasswordProtected: item.isPasswordProtected || false,
             };
+            
+            console.log('📤 Lesson payload being sent:', lessonPayload);
+            
+            return lessonPayload;
           })
         })),
         faqs: faqs.filter(f => f.question.trim() && f.answer.trim()),
@@ -350,11 +364,15 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
     data: {
       videoUrls: Record<string, string>;
       thumbnailUrl: string;
+      masterPlaylistUrl?: string;
       metadata: VideoMetadata;
     }
   ) => {
     console.log('=== VIDEO PROCESSING COMPLETE ===');
+    console.log('Module Index:', moduleIndex);
+    console.log('Item Index:', itemIndex);
     console.log('HLS Quality URLs:', data.videoUrls);
+    console.log('Master Playlist URL:', data.masterPlaylistUrl);
     console.log('Thumbnail:', data.thumbnailUrl);
     console.log('Metadata:', data.metadata);
 
@@ -377,14 +395,20 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
         duration: data.metadata.duration,
       },
     };
+    
+    console.log('📦 Video item created:', videoItem);
+    console.log('📍 Updating module', moduleIndex, 'item', itemIndex);
+    console.log('📋 Current modules before update:', updated);
 
     if (itemIndex >= updated[moduleIndex].items.length) {
       updated[moduleIndex].items.push(videoItem);
+      console.log('➕ Pushed new item to module');
     } else {
       updated[moduleIndex].items[itemIndex] = videoItem;
+      console.log('✏️ Replaced existing item in module');
     }
-
-    console.log('Updated modules after video processing:', updated);
+    
+    console.log('📋 Updated modules after update:', updated);
 
     setModules(updated);
     setShowVideoUploader(null);

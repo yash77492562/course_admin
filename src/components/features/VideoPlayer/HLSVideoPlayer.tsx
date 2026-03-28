@@ -3,7 +3,11 @@
 import { useEffect, useRef, useState } from 'react';
 import videojs from 'video.js';
 import 'video.js/dist/video-js.css';
-import 'videojs-contrib-quality-levels';
+
+// Register quality levels plugin only once
+if (typeof window !== 'undefined' && !videojs.getPlugin('qualityLevels')) {
+  require('videojs-contrib-quality-levels');
+}
 
 interface HLSVideoPlayerProps {
   hlsMasterPlaylist?: string; // HLS master playlist URL (if available)
