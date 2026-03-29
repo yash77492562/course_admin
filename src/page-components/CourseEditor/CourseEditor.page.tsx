@@ -1050,11 +1050,16 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
                               {item.contentType === 'PDF' && item.pdfUrl ? (
                                 <button
                                   onClick={() => {
-                                    setShowPDFViewer({
-                                      pdfUrl: item.pdfUrl!,
-                                      password: item.pdfPassword,
-                                      title: item.title
-                                    });
+                                    // Open PDF in video-player page with data parameter
+                                    const pdfData = {
+                                      title: item.title,
+                                      contentType: 'PDF',
+                                      pdfUrl: item.pdfUrl,
+                                      pdfPassword: item.pdfPassword,
+                                      isPasswordProtected: item.isPasswordProtected
+                                    };
+                                    const dataParam = encodeURIComponent(JSON.stringify(pdfData));
+                                    window.open(`/video-player/${item.id}?data=${dataParam}`, '_blank');
                                   }}
                                   className="flex-1 text-left border-none p-0 bg-transparent hover:text-blue-600 transition-colors cursor-pointer"
                                   style={{ color: '#64748b', fontSize: '0.9rem', lineHeight: '1.5' }}
@@ -1066,16 +1071,21 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
                               item.contentType === 'VIDEO' && item.videoUrl && !item.videoUrl.startsWith('temp://') ? (
                                 <button
                                   onClick={() => {
-                                    // For YouTube videos, show preview modal (works for both saved and unsaved)
-                                    if (item.videoType === 'YOUTUBE') {
-                                      setShowYouTubePreview({
-                                        videoUrl: item.videoUrl,
-                                        title: item.title
-                                      });
-                                    } else {
-                                      // For uploaded videos, just open by ID (fetch from API)
-                                      window.open(`/video-player/${item.id}`, '_blank');
-                                    }
+                                    // Open in video-player page with data parameter
+                                    const videoData = {
+                                      title: item.title,
+                                      contentType: 'VIDEO',
+                                      videoUrl: item.videoUrl,
+                                      videoType: item.videoType,
+                                      hlsMasterPlaylist: item._r2MasterPlaylist,
+                                      hlsQualities: item._r2VideoUrls,
+                                      thumbnail: item._r2Thumbnail,
+                                      originalWidth: item._r2Metadata?.originalWidth,
+                                      originalHeight: item._r2Metadata?.originalHeight,
+                                      videoDuration: item._r2Metadata?.duration
+                                    };
+                                    const dataParam = encodeURIComponent(JSON.stringify(videoData));
+                                    window.open(`/video-player/${item.id}?data=${dataParam}`, '_blank');
                                   }}
                                   className="flex-1 text-left border-none p-0 bg-transparent hover:text-blue-600 transition-colors cursor-pointer"
                                   style={{ color: '#64748b', fontSize: '0.9rem', lineHeight: '1.5' }}

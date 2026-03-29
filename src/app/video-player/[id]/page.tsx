@@ -10,6 +10,11 @@ const VideoPlayerWrapper = dynamic(
   { ssr: false }
 );
 
+const PDFViewerSimple = dynamic(
+  () => import('@/components/features/LectureUploader/PDFViewerSimple').then(mod => ({ default: mod.PDFViewerSimple })),
+  { ssr: false }
+);
+
 export default function VideoPlayerPage() {
   const params = useParams();
   const searchParams = useSearchParams();
@@ -65,19 +70,48 @@ export default function VideoPlayerPage() {
   if (!videoData) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center">
-        <div className="text-red-400 text-xl">Video not available</div>
+        <div className="text-red-400 text-xl">Content not available</div>
       </div>
     );
   }
 
-  console.log('📹 Video Data:', videoData);
+  console.log('📹 Content Data:', videoData);
+  console.log('📹 Content Type:', videoData.contentType);
   console.log('📹 Video Type:', videoData.videoType);
-  console.log('📹 HLS Master Playlist:', videoData.hlsMasterPlaylist);
-  console.log('📹 HLS Qualities:', videoData.hlsQualities);
-  console.log('📹 Video URLs:', videoData.videoUrls);
-  console.log('📹 Video URL:', videoData.videoUrl);
 
-  // Check video type and availability
+  const contentType = videoData.contentType || 'VIDEO';
+
+  // Handle PDF content
+  if (contentType === 'PDF') {
+    if (!videoData.pdfUrl) {
+      return (
+        <div className="min-h-screen bg-black flex items-center justify-center">
+          <div className="text-center">
+            <div className="text-red-400 text-xl mb-4">No PDF available</div>
+            <div className="text-gray-400 text-sm">
+              This lesson doesn't have a PDF uploaded yet.
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="fixed inset-0 bg-black flex flex-col">
+        <div className="flex-1 flex flex-col p-4 overflow-hidden">
+          <div className="flex-1 bg-white rounded-lg overflow-hidden">
+            <PDFViewerSimple
+              pdfUrl={videoData.pdfUrl}
+              password={videoData.pdfPassword}
+              title={videoData.title}
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Handle VIDEO content
   const isYouTube = videoData.videoType === 'YOUTUBE';
   const hasHLS = videoData.hlsMasterPlaylist || (videoData.hlsQualities && Object.keys(videoData.hlsQualities).length > 0);
   const hasMP4 = videoData.videoUrls && Object.keys(videoData.videoUrls).length > 0;
