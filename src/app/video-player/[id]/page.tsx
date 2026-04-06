@@ -70,11 +70,14 @@ export default function VideoPlayerPage() {
   useEffect(() => {
     const loadLesson = async () => {
       try {
-        // Always fetch from API to get full navigation structure
-        const response = await fetch(`/api/lessons/${lessonId}`);
+        // Fetch directly from backend API to get fresh proxy URLs
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3002';
+        const response = await fetch(`${apiUrl}/courses/lessons/${lessonId}`, {
+          cache: 'no-store',
+        });
         const result = await response.json();
         
-        console.log('API Response:', result);
+        console.log('Backend API Response:', result);
         
         if (result.success && result.data) {
           console.log('Lesson Data Structure:', {

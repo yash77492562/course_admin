@@ -36,37 +36,30 @@ export function VideoPlayerPage({ videoId }: VideoPlayerPageProps) {
       try {
         setLoading(true);
         
-        // First try to get data from URL parameter (for backward compatibility)
-        const dataParam = searchParams.get('data');
-        if (dataParam) {
-          try {
-            const decodedData = JSON.parse(decodeURIComponent(dataParam));
-            
-            if (!decodedData.videoUrl || decodedData.videoUrl.trim() === '') {
-              setError('No video URL provided');
-              return;
-            }
-            
-            setVideoData(decodedData);
-            return;
-          } catch (parseError) {
-            console.error('Failed to parse video data from URL:', parseError);
-            // Continue to fetch from API
-          }
-        }
+        // Fetch directly from backend API to get fresh proxy URLs
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3002';
+        console.log('Fetching video data from backend for lesson:', videoId);
         
-        // Fetch video data from backend API
-        console.log('Fetching video data from API for lesson:', videoId);
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3002'}/api/lessons/${videoId}`);
+        const response = await fetch(`${apiUrl}/courses/lessons/${videoId}`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          cache: 'no-store',
+        });
         
         if (!response.ok) {
           throw new Error(`Failed to fetch video: ${response.status}`);
         }
         
-        const lesson = await response.json();
-        console.log('Lesson data from API:', lesson);
+        const result = await response.json();
+        console.log('Backend API Response:', result);
         
-        if (!lesson.videoUrl && !lesson.videoUrls) {
+        // Handle wrapped response
+        const lesson = result.data || result;
+        console.log('Lesson data from backend:', lesson);
+        
+        if (!lesson.videoUrl && !lesson.videoUrls && !lesson.hlsQualities) {
           setError('No video available for this lesson');
           return;
         }
@@ -91,7 +84,7 @@ export function VideoPlayerPage({ videoId }: VideoPlayerPageProps) {
     };
 
     loadVideoData();
-  }, [videoId, searchParams]);
+  }, [videoId]);
 
   const handleGoBack = () => {
     window.close();
