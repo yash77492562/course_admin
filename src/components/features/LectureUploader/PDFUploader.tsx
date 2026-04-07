@@ -60,7 +60,7 @@ export function PDFUploader({ onComplete, onCancel }: PDFUploaderProps) {
         formData.append('password', password);
       }
 
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/lecture/upload-pdf`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/lecture/upload-pdf`, {
         method: 'POST',
         body: formData,
       });
