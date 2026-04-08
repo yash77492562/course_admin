@@ -3,7 +3,8 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   /* config options here */
   
-  // Turbopack is now default in Next.js 16 (enabled via --turbopack flag)
+  // Turbopack is now default in Next.js 16
+  turbopack: {},
   
   experimental: {
     optimizePackageImports: ['@/components'],
@@ -33,18 +34,6 @@ const nextConfig: NextConfig = {
         hostname: 'influbee.edf54fe3baf509501a8c1ba24eb000dd.r2.cloudflarestorage.com',
       },
     ],
-  },
-  
-  // Fix Video.js package.json parsing issue
-  webpack: (config, { isServer }) => {
-    if (!isServer) {
-      // Ignore Video.js package.json files that cause parsing errors
-      config.resolve.alias = {
-        ...config.resolve.alias,
-        'video.js/package.json': false,
-      };
-    }
-    return config;
   },
   
   async rewrites() {

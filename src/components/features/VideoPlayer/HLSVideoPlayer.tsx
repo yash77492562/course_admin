@@ -153,7 +153,7 @@ export function HLSVideoPlayer({
         console.log('📊 Video metadata loaded');
         
         // Initialize quality levels plugin
-        const qualityLevels = player.qualityLevels();
+        const qualityLevels = (player as any).qualityLevels();
         
         console.log('🔍 Quality Levels Object:', qualityLevels);
         console.log('🔍 Quality Levels Length:', qualityLevels ? qualityLevels.length : 'undefined');
@@ -194,15 +194,15 @@ export function HLSVideoPlayer({
           class QualityMenuItem extends MenuItem {
             private isCurrentlySelected: boolean = false;
             
-            constructor(player: videojs.Player, options: any) {
+            constructor(player: any, options: any) {
               super(player, options);
-              this.selectable = true;
+              (this as any).selectable = true;
               this.isCurrentlySelected = options.selected || false;
-              this.selected(this.isCurrentlySelected);
+              (this as any).selected(this.isCurrentlySelected);
             }
             
             handleClick() {
-              const qualityLevels = this.player().qualityLevels();
+              const qualityLevels = (this.player() as any).qualityLevels();
               const parent = this.options_.parent;
               const player = this.player();
               
