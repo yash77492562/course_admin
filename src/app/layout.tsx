@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { NotificationProvider } from "@/contexts/NotificationContext";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
+import { QueryProvider } from "@/providers/QueryProvider";
+import { GlobalUploadStatus } from "@/components/features/GlobalUploadStatus/GlobalUploadStatus";
 
 export const metadata: Metadata = {
   title: "Riva Data Admin",
@@ -20,9 +22,13 @@ export default function RootLayout({
         suppressHydrationWarning={true}
       >
         <ErrorBoundary>
-          <NotificationProvider>
-            {children}
-          </NotificationProvider>
+          <QueryProvider>
+            <NotificationProvider>
+              {children}
+              {/* Global Upload Status - Shows ALL active uploads to ALL admins */}
+              <GlobalUploadStatus />
+            </NotificationProvider>
+          </QueryProvider>
         </ErrorBoundary>
       </body>
     </html>

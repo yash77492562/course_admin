@@ -133,7 +133,12 @@ export function UserQueriesPage() {
           No contacts found
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
+        <div style={{ 
+          display: 'grid', 
+          gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', 
+          gap: '20px',
+          width: '100%'
+        }}>
           {contacts.map((contact) => (
             <ContactCard
               key={contact.id}

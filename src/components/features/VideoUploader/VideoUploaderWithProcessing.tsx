@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { QualitySelector } from './QualitySelector';
 import { ProcessingProgress } from './ProcessingProgress';
 import { useNotifications } from '@/contexts/NotificationContext';
+import { backendVideoUploader, type UploadProgress, type ProcessingProgress as BackendProcessingProgress } from '@/lib/video/backendVideoUploader';
 import type {
   VideoMetadata,
   ProcessingStatus,
@@ -12,6 +13,8 @@ import type {
 } from '@/types/video-processing.types';
 
 interface VideoUploaderWithProcessingProps {
+  courseId?: string; // NEW: For upload lock
+  moduleName?: string; // NEW: For Redis display
   lessonId: string;
   lessonName: string;
   onComplete: (data: {
@@ -26,6 +29,8 @@ interface VideoUploaderWithProcessingProps {
 }
 
 export function VideoUploaderWithProcessing({
+  courseId,
+  moduleName,
   lessonId,
   lessonName,
   onComplete,
@@ -35,25 +40,21 @@ export function VideoUploaderWithProcessing({
   const [step, setStep] = useState<'upload' | 'quality-select' | 'processing'>('upload');
   const [file, setFile] = useState<File | null>(null);
   const [youtubeUrl, setYoutubeUrl] = useState<string>('');
-  const [uploadId, setUploadId] = useState<string>(''); // Changed from tempPath
   const [availableQualities, setAvailableQualities] = useState<string[]>([]);
   const [videoMetadata, setVideoMetadata] = useState<VideoMetadata | null>(null);
   const [error, setError] = useState<string>('');
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress[]>([]);
   const [processingStatus, setProcessingStatus] = useState<ProcessingStatus | null>(null);
-  const [eventSource, setEventSource] = useState<EventSource | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { success, error: showError, info } = useNotifications();
 
-  // Cleanup event source on unmount
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (eventSource) {
-        console.log('🧹 Cleaning up SSE connection');
-        eventSource.close();
-      }
+      console.log('🧹 Component unmounting');
     };
-  }, [eventSource]);
+  }, []);
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -81,28 +82,43 @@ export function VideoUploaderWithProcessing({
       setError('');
       setUploading(true);
       
-      console.log('🔍 Starting video analysis...');
-      info('Analyzing Video', 'Uploading and analyzing your video...');
+      console.log('🔍 Starting video analysis (browser-side)...');
+      info('Analyzing Video', 'Analyzing your video...');
       
-      const formData = new FormData();
-      formData.append('file', videoFile);
+      // NEW: Acquire upload lock if courseId is provided
+      if (courseId) {
+        console.log('🔒 Acquiring upload lock...');
+        const lockResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/upload/video/start`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            courseId,
+            lessonId,
+            userId: 'admin1', // TODO: Get from auth context
+            fileName: videoFile.name,
+            fileSize: videoFile.size,
+            moduleName, // Store in Redis for display
+            lessonName, // Store in Redis for display
+          }),
+        });
 
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/video-processing/analyze`, {
-        method: 'POST',
-        body: formData,
-      });
+        if (!lockResponse.ok) {
+          const error = await lockResponse.json();
+          if (error.error === 'COURSE_LOCKED') {
+            throw new Error(`Course is locked by ${error.lockedBy}. Please wait for the current upload to complete.`);
+          }
+          throw new Error('Failed to acquire upload lock');
+        }
 
-      const result: AnalyzeVideoResponse = await response.json();
-
-      console.log('📊 Analysis result:', result);
-
-      if (!result.success) {
-        throw new Error(result.error || 'Failed to analyze video');
+        console.log('✅ Upload lock acquired');
       }
+      
+      // Use browser-side analysis (no upload yet!)
+      const analysis = await backendVideoUploader.analyzeVideo(videoFile);
 
-      const { analysis, uploadId: id } = result;
+      console.log('📊 Analysis result:', analysis);
 
-      if (!analysis.isValid) {
+      if (!analysis.canProcess) {
         const errorMsg = analysis.error || 'Video quality too low (minimum 460p required)';
         setError(errorMsg);
         showError('Invalid Video', errorMsg);
@@ -122,7 +138,6 @@ export function VideoUploaderWithProcessing({
         height: analysis.height,
         duration: analysis.duration,
       });
-      setUploadId(id); // Changed from setTempPath
       setUploading(false);
 
       success(
@@ -138,81 +153,119 @@ export function VideoUploaderWithProcessing({
       setError(errorMsg);
       showError('Analysis Failed', errorMsg);
       setUploading(false);
+      
+      // NEW: Release lock on error if courseId is provided
+      if (courseId) {
+        try {
+          await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/upload/cancel/${courseId}`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: 'admin1' }), // TODO: Get from auth context
+          });
+        } catch (releaseError) {
+          console.error('Failed to release lock:', releaseError);
+        }
+      }
     }
   };
 
   const handleQualityConfirm = async (selectedQualities: string[]) => {
+    if (!file) {
+      setError('No file selected');
+      return;
+    }
+
     try {
       setError('');
+      
+      // IMPORTANT: Set step to 'processing' FIRST to show the 5-step window
+      console.log('🎬 Transitioning to processing step - showing 5-step window');
       setStep('processing');
-
-      console.log('🎬 Starting video processing with qualities:', selectedQualities);
-      info('Starting Processing', `Processing ${selectedQualities.length} quality version(s)...`);
-
-      // Start processing
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/video-processing/process`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          lessonId,
-          lessonName,
-          qualities: selectedQualities,
-          uploadId, // Changed from tempPath
-        }),
+      
+      // Initialize processing status to show the window immediately
+      setProcessingStatus({
+        lessonId: `frontend_${Date.now()}`,
+        status: 'connecting',
+        progress: 0,
+        message: 'Initializing upload...',
       });
-
-      const result: ProcessVideoResponse = await response.json();
-
-      console.log('📤 Process request result:', result);
-
-      if (!result.success) {
-        throw new Error(result.message || 'Failed to start processing');
-      }
-
-      console.log('✅ Video added to processing queue');
-      info('Video Queued', 'Your video has been added to the processing queue');
-
-      // Connect to SSE for progress updates with retry logic
-      const sseUrl = `${process.env.NEXT_PUBLIC_API_URL}/api/video-processing/progress/${lessonId}`;
-      console.log('📡 Connecting to SSE:', sseUrl);
       
-      let reconnectAttempts = 0;
-      const maxReconnectAttempts = 5;
-      const reconnectDelay = 2000; // 2 seconds
-      
-      const connectSSE = () => {
-        const es = new EventSource(sseUrl);
+      setUploadProgress([]);
 
-        es.onopen = () => {
-          console.log('✅ SSE connection established');
-          reconnectAttempts = 0; // Reset on successful connection
-        };
+      console.log('🎬 Starting NEW video upload system with qualities:', selectedQualities);
+      info('Starting Upload', `Uploading ${selectedQualities.length} quality version(s)...`);
 
-        es.onmessage = (event) => {
-          const status = JSON.parse(event.data) as ProcessingStatus;
+      // Use NEW upload system
+      const { lessonId: newLessonId, jobId } = await backendVideoUploader.uploadVideo(
+        file,
+        lessonId, // Frontend temp ID (backend will replace)
+        lessonName,
+        selectedQualities,
+        // Upload progress callback
+        (progress: UploadProgress[]) => {
+          setUploadProgress(progress);
+          console.log('📊 Upload progress:', progress);
+        },
+        // Processing progress callback
+        (progress: BackendProcessingProgress) => {
+          console.log('📊 ========== PROGRESS CALLBACK ==========');
+          console.log('   Received from backendVideoUploader:');
+          console.log('     - progress:', progress.progress + '%');
+          console.log('     - currentStep:', progress.currentStep);
+          console.log('     - stepProgress:', progress.stepProgress);
+          console.log('     - segmentsUploaded:', progress.segmentsUploaded);
+          console.log('     - totalSegments:', progress.totalSegments);
+          console.log('     - message:', progress.message);
+          console.log('     - status:', progress.status);
+          console.log('========================================');
           
-          // Ignore heartbeat messages
-          if (status.status === 'heartbeat' || status.status === 'connecting') {
-            console.log('💓 Heartbeat received');
-            return;
-          }
+          // Convert BackendProcessingProgress to ProcessingStatus
+          const status: ProcessingStatus = {
+            lessonId: progress.lessonId,
+            status: progress.status,
+            progress: progress.progress,
+            currentQuality: progress.currentQuality,
+            qualityProgress: progress.qualityProgress,
+            message: progress.message,
+            error: progress.error,
+            videoUrls: progress.videoUrls,
+            thumbnailUrl: progress.thumbnailUrl,
+            // NEW: Pass step data from Redis
+            currentStep: progress.currentStep,
+            stepProgress: progress.stepProgress,
+            segmentsUploaded: progress.segmentsUploaded,
+            totalSegments: progress.totalSegments,
+          };
           
-          console.log('📊 Progress update:', status);
+          console.log('📊 ========== SETTING PROCESSING STATUS ==========');
+          console.log('   Status object:', JSON.stringify(status, null, 2));
+          console.log('========================================');
+          
           setProcessingStatus(status);
 
           // Show notifications for key status changes
-          if (status.status === 'queued' && status.queuePosition) {
-            info('Video Queued', `Position in queue: ${status.queuePosition}`);
-          } else if (status.status === 'processing' && status.progress === 10) {
+          if (status.status === 'processing' && status.progress === 10) {
             info('Processing Started', 'Video processing has begun');
-          } else if (status.status === 'complete' && status.videoUrls && status.thumbnailUrl && videoMetadata) {
+          } else if (status.status === 'complete') {
             console.log('✅ Processing complete!');
+            console.log('   NEW lessonId (MongoDB ObjectID):', newLessonId);
             console.log('   Video URLs (HLS playlists):', status.videoUrls);
             console.log('   Thumbnail:', status.thumbnailUrl);
-            if (status.masterPlaylistUrl) {
-              console.log('   Master Playlist:', status.masterPlaylistUrl);
-            }
+            console.log('   Master Playlist:', (status as any).masterPlaylistUrl);
             console.log('   Metadata:', videoMetadata);
+            
+            // CRITICAL FIX: Check if we have video URLs
+            if (!status.videoUrls || Object.keys(status.videoUrls).length === 0) {
+              console.error('❌ CRITICAL: No video URLs in completion status!');
+              console.error('   This means fetchFinalVideoUrls did not return URLs');
+              console.error('   Status:', JSON.stringify(status, null, 2));
+              showError(
+                'Video URLs Missing',
+                'Video processed but URLs not found. Please try uploading again or contact support.'
+              );
+              return;
+            }
+            
             console.log('📤 Calling onComplete with data...');
             
             success(
@@ -223,61 +276,63 @@ export function VideoUploaderWithProcessing({
             const dataToPass = {
               videoUrls: status.videoUrls,
               thumbnailUrl: status.thumbnailUrl,
-              masterPlaylistUrl: status.masterPlaylistUrl,
-              metadata: videoMetadata,
+              masterPlaylistUrl: (status as any).masterPlaylistUrl, // Get from status
+              metadata: videoMetadata || undefined, // Convert null to undefined for type compatibility
               videoType: 'UPLOAD' as const,
             };
             
-            console.log('📦 Data being passed to onComplete:', dataToPass);
-            
+            console.log('📦 Data being passed to onComplete:', JSON.stringify(dataToPass, null, 2));
             onComplete(dataToPass);
-            es.close();
           } else if (status.status === 'error') {
             console.error('❌ Processing error:', status.error);
             showError('Processing Failed', status.error || 'An error occurred during processing');
-            es.close();
           }
-        };
+        },
+        courseId, // Pass courseId for upload lock
+        moduleName // Pass moduleName for Redis display
+      );
 
-        es.onerror = (err) => {
-          console.error('❌ SSE connection error:', err);
-          es.close();
-          
-          // Attempt to reconnect
-          if (reconnectAttempts < maxReconnectAttempts) {
-            reconnectAttempts++;
-            console.log(`🔄 Attempting to reconnect (${reconnectAttempts}/${maxReconnectAttempts})...`);
-            info('Reconnecting', `Attempting to reconnect to server (${reconnectAttempts}/${maxReconnectAttempts})...`);
-            
-            setTimeout(() => {
-              connectSSE();
-            }, reconnectDelay);
-          } else {
-            console.error('❌ Max reconnection attempts reached');
-            setError('Connection to server lost');
-            showError('Connection Lost', 'Lost connection to server. Please try again.');
-          }
-        };
-
-        setEventSource(es);
-      };
-      
-      // Initial connection
-      connectSSE();
+      console.log('✅ Upload initiated successfully');
+      console.log('   NEW lessonId (MongoDB ObjectID):', newLessonId);
+      console.log('   jobId:', jobId);
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Failed to start processing';
-      console.error('❌ Failed to start processing:', err);
+      const errorMsg = err instanceof Error ? err.message : 'Failed to start upload';
+      console.error('❌ Failed to start upload:', err);
       setError(errorMsg);
-      showError('Processing Failed', errorMsg);
+      showError('Upload Failed', errorMsg);
       setStep('quality-select');
+      
+      // Release lock on error if courseId is provided
+      if (courseId) {
+        try {
+          await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/upload/cancel/${courseId}`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: 'admin1' }), // TODO: Get from auth context
+          });
+        } catch (releaseError) {
+          console.error('Failed to release lock:', releaseError);
+        }
+      }
     }
   };
 
-  const handleCancel = () => {
+  const handleCancel = async () => {
     console.log('🚫 User cancelled video upload');
-    if (eventSource) {
-      eventSource.close();
+    
+    // Release lock if courseId is provided
+    if (courseId) {
+      try {
+        await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/upload/cancel/${courseId}`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: 'admin1' }), // TODO: Get from auth context
+        });
+      } catch (releaseError) {
+        console.error('Failed to release lock:', releaseError);
+      }
     }
+    
     onCancel();
   };
 
@@ -475,6 +530,21 @@ export function VideoUploaderWithProcessing({
           qualityProgress={processingStatus.qualityProgress}
           message={processingStatus.message}
           error={processingStatus.error}
+          onCancel={handleCancel}
+          // NEW: Pass step data from Redis
+          currentStep={(processingStatus as any).currentStep}
+          stepProgress={(processingStatus as any).stepProgress}
+          segmentsUploaded={(processingStatus as any).segmentsUploaded}
+          totalSegments={(processingStatus as any).totalSegments}
+        />
+      )}
+      
+      {/* Processing Step - Fallback if processingStatus is not set yet */}
+      {step === 'processing' && !processingStatus && (
+        <ProcessingProgress
+          status="connecting"
+          progress={0}
+          message="Initializing..."
           onCancel={handleCancel}
         />
       )}

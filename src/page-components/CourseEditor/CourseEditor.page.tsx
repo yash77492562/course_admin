@@ -8,6 +8,9 @@ import { Input, Textarea, Alert } from '@/components/ui';
 import { useNotifications } from '@/contexts/NotificationContext';
 import { VideoUploaderWithProcessing } from '@/components/features/VideoUploader/VideoUploaderWithProcessing';
 import { PDFUploader } from '@/components/features/LectureUploader/PDFUploader';
+import { UploadLockIndicator } from '@/components/features/UploadLockIndicator/UploadLockIndicator';
+import { useUploadStatus } from '@/hooks/useUploadStatus';
+import { VideoTitleModal } from '@/components/ui/Modal/Modal';
 import type { VideoMetadata } from '@/types/video-processing.types';
 
 // Dynamic import for PDFViewer to prevent SSR issues
@@ -59,6 +62,9 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
   const [currentStatus, setCurrentStatus] = useState<CourseStatus>(course?.status || CourseStatus.DRAFT);
   const { success, error, warning, info } = useNotifications();
   
+  // Upload lock status - polls every 2 seconds
+  const { status: uploadStatus } = useUploadStatus(course?.id || 'new');
+  
   // Hero Section Data (matches CourseHeroSection)
   const [heroData, setHeroData] = useState({
     badge: course?.category || '',
@@ -100,27 +106,13 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
           pdfUrl: lesson.pdfUrl,
           pdfPassword: lesson.pdfPassword,
           isPasswordProtected: lesson.isPasswordProtected || false
-        })) || [{ 
-          id: `default_${Date.now()}`, 
-          title: 'Add your first video',
-          contentType: 'VIDEO' as const,
-          videoUrl: '',
-          videoType: 'UPLOAD' as const,
-          description: ''
-        }]
+        })) || [] // Empty array if no lessons - user will add manually
       }));
     }
     return [{
       id: '1',
       title: 'Module 1: Foundations',
-      items: [{ 
-        id: `default_${Date.now()}`, 
-        title: 'Add your first video',
-        contentType: 'VIDEO' as const,
-        videoUrl: '',
-        videoType: 'UPLOAD' as const,
-        description: ''
-      }]
+      items: [] // Start with empty items - user will add video/lecture manually
     }];
   };
 
@@ -135,6 +127,7 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
 
   // Video Upload State
   const [showVideoUploader, setShowVideoUploader] = useState<{ moduleIndex: number; itemIndex: number; title: string } | null>(null);
+  const [showVideoTitleModal, setShowVideoTitleModal] = useState<{ moduleIndex: number; itemIndex: number } | null>(null);
   
   // PDF Lecture Upload State
   const [showPDFUploader, setShowPDFUploader] = useState<{ moduleIndex: number; itemIndex: number } | null>(null);
@@ -316,11 +309,7 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
     const newModule: EditorModule = {
       id: newModuleId,
       title: `Module ${modules.length + 1}: `,
-      items: [{ 
-        id: '1', 
-        title: 'First video lesson',
-        contentType: 'VIDEO'
-      }]
+      items: [] // Start with empty items - user will add video/lecture manually
     };
     setModules([...modules, newModule]);
     // Open the new module by default
@@ -352,10 +341,9 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
 
   const removeModuleItem = (moduleIndex: number, itemIndex: number) => {
     const updated = [...modules];
-    if (updated[moduleIndex].items.length > 1) {
-      updated[moduleIndex].items = updated[moduleIndex].items.filter((_, i) => i !== itemIndex);
-      setModules(updated);
-    }
+    // Allow removing all items - modules can have empty items array
+    updated[moduleIndex].items = updated[moduleIndex].items.filter((_, i) => i !== itemIndex);
+    setModules(updated);
   };
 
   // Video Upload Handler - NEW: Uses VideoUploaderWithProcessing
@@ -541,6 +529,13 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
       {/* Save/Cancel Header */}
       <div className="bg-white border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+          {/* Upload Lock Indicator - Shows if video is uploading */}
+          {course?.id && (
+            <div className="mb-4">
+              <UploadLockIndicator courseId={course.id} />
+            </div>
+          )}
+          
           <div className="flex items-center justify-between">
             <div>
               <div className="flex items-center gap-3 mb-1">
@@ -570,15 +565,17 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
               </button>
               <button 
                 onClick={() => handleSave(CourseStatus.DRAFT)} 
-                disabled={isLoading}
-                className="border border-gray-300 text-gray-700 px-6 py-2 rounded-lg font-medium hover:bg-gray-50 transition-colors disabled:opacity-50"
+                disabled={isLoading || uploadStatus.isLocked}
+                className="border border-gray-300 text-gray-700 px-6 py-2 rounded-lg font-medium hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                title={uploadStatus.isLocked ? 'Cannot save while video is uploading' : ''}
               >
                 {isLoading ? 'Saving...' : 'Save Draft'}
               </button>
               <button 
                 onClick={() => handleSave(CourseStatus.PUBLISHED)} 
-                disabled={isLoading}
-                className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg font-medium transition-colors disabled:opacity-50"
+                disabled={isLoading || uploadStatus.isLocked}
+                className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                title={uploadStatus.isLocked ? 'Cannot publish while video is uploading' : ''}
               >
                 {isLoading ? 'Publishing...' : 'Publish'}
               </button>
@@ -1016,12 +1013,11 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
                           <div style={{ display: 'flex', gap: '8px' }}>
                             <button 
                               onClick={() => {
-                                const title = prompt('Enter video title:');
-                                if (title) {
-                                  setShowVideoUploader({ moduleIndex, itemIndex: module.items.length, title });
-                                }
+                                setShowVideoTitleModal({ moduleIndex, itemIndex: module.items.length });
                               }}
-                              className="bg-green-500 hover:bg-green-600 text-white px-2 py-1 rounded text-xs font-medium transition-colors"
+                              disabled={uploadStatus.isLocked}
+                              className="bg-green-500 hover:bg-green-600 text-white px-2 py-1 rounded text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                              title={uploadStatus.isLocked ? 'Another video is currently uploading' : 'Add a new video'}
                             >
                               + Add Video
                             </button>
@@ -1035,6 +1031,50 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
                             </button>
                           </div>
                         </div>
+                        
+                        {/* Show upload status if this course is uploading */}
+                        {course?.id && uploadStatus.isLocked && uploadStatus.status !== 'idle' && (
+                          <div className="mb-3 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs">
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="font-medium text-yellow-800">
+                                {uploadStatus.queuePosition && uploadStatus.queuePosition > 0
+                                  ? `⏳ Queued - Position ${uploadStatus.queuePosition}`
+                                  : uploadStatus.status === 'processing'
+                                  ? '⚙️ Processing Video'
+                                  : '📤 Uploading...'}
+                              </span>
+                              <span className="text-yellow-700">{uploadStatus.progress}%</span>
+                            </div>
+                            {/* Show module and lesson name */}
+                            {uploadStatus.moduleName && (
+                              <div className="text-yellow-900 font-medium mb-0.5">
+                                📚 {uploadStatus.moduleName}
+                              </div>
+                            )}
+                            {uploadStatus.lessonName && (
+                              <div className="text-yellow-700 mb-1">
+                                📹 {uploadStatus.lessonName}
+                              </div>
+                            )}
+                            {uploadStatus.fileName && (
+                              <div className="text-yellow-700 mb-1">{uploadStatus.fileName}</div>
+                            )}
+                            {(!uploadStatus.queuePosition || uploadStatus.queuePosition === 0) && (
+                              <div className="w-full bg-yellow-200 rounded-full h-1">
+                                <div
+                                  className="bg-yellow-600 h-1 rounded-full transition-all duration-300"
+                                  style={{ width: `${uploadStatus.progress}%` }}
+                                />
+                              </div>
+                            )}
+                            {uploadStatus.queuePosition && uploadStatus.queuePosition > 0 && (
+                              <div className="text-yellow-600 text-xs mt-1">
+                                Waiting for {uploadStatus.queuePosition - 1} other upload{uploadStatus.queuePosition > 2 ? 's' : ''}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        
                         <ul style={{ listStyleType: 'disc', color: '#64748b' }}>
                           {module.items.map((item, itemIndex) => (
                             <li key={itemIndex} style={{ 
@@ -1265,11 +1305,13 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
       </section>
 
       {/* Video Upload Modal - NEW: Quality Selection Flow */}
-      {showVideoUploader && (
+      {showVideoUploader && course?.id && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
             <VideoUploaderWithProcessing
-              lessonId={`temp_${Date.now()}`}
+              courseId={course.id}
+              moduleName={modules[showVideoUploader.moduleIndex]?.title || 'Unknown Module'}
+              lessonId={`frontend_${Date.now()}`}
               lessonName={showVideoUploader.title}
               onComplete={(data) => handleVideoComplete(
                 showVideoUploader.moduleIndex,
@@ -1370,6 +1412,22 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
           </div>
         </div>
       )}
+      
+      {/* Video Title Modal - Reusable component instead of prompt() */}
+      <VideoTitleModal
+        isOpen={!!showVideoTitleModal}
+        onClose={() => setShowVideoTitleModal(null)}
+        onSubmit={(title) => {
+          if (showVideoTitleModal) {
+            setShowVideoUploader({
+              moduleIndex: showVideoTitleModal.moduleIndex,
+              itemIndex: showVideoTitleModal.itemIndex,
+              title,
+            });
+            setShowVideoTitleModal(null);
+          }
+        }}
+      />
     </div>
   );
 }

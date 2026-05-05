@@ -42,6 +42,19 @@ const nextConfig: NextConfig = {
         source: '/api/:path*',
         destination: 'http://localhost:3002/api/:path*',
       },
+      // Video upload services (chunked upload) - these run on separate ports
+      {
+        source: '/video-upload-460p/:path*',
+        destination: 'http://localhost:3010/video-upload-460p/:path*',
+      },
+      {
+        source: '/video-upload-720p/:path*',
+        destination: 'http://localhost:3011/video-upload-720p/:path*',
+      },
+      {
+        source: '/video-upload-1080p/:path*',
+        destination: 'http://localhost:3012/video-upload-1080p/:path*',
+      },
     ];
   },
 };

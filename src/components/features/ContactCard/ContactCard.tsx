@@ -79,7 +79,7 @@ export function ContactCard({ contact, onStatusChange }: ContactCardProps) {
     <>
       <div
         onClick={() => setShowModal(true)}
-        className="bg-white border border-gray-200 rounded-xl p-6 cursor-pointer hover:shadow-lg transition-all duration-200 h-full flex flex-col"
+        className="bg-white border border-gray-200 rounded-xl p-6 cursor-pointer hover:shadow-lg transition-all duration-200 flex flex-col h-full min-h-[280px]"
       >
         <div className="flex justify-between items-start mb-4">
           <div className="flex-1 min-w-0">
@@ -95,11 +95,11 @@ export function ContactCard({ contact, onStatusChange }: ContactCardProps) {
         </div>
 
         <div className="mb-4 flex-1">
-          <p className="text-sm font-semibold text-gray-900 mb-2">
+          <p className="text-sm font-semibold text-gray-900 mb-2 break-words">
             Subject: {contact.subject}
           </p>
-          <p className="text-sm text-gray-600 line-clamp-3">
-            {truncateText(contact.message, 120)}
+          <p className="text-sm text-gray-600 line-clamp-3 break-words">
+            {contact.message}
           </p>
         </div>
 
@@ -147,7 +147,7 @@ export function ContactCard({ contact, onStatusChange }: ContactCardProps) {
                   {steps[currentStep].title}
                 </h2>
                 <div className={`w-full max-w-lg ${steps[currentStep].isLong ? 'text-left max-h-64 overflow-y-auto' : 'text-center'} px-4`}>
-                  <p className={`text-lg text-gray-700 ${steps[currentStep].isLong ? 'whitespace-pre-wrap leading-relaxed' : ''}`}>
+                  <p className={`text-lg text-gray-700 break-words ${steps[currentStep].isLong ? 'whitespace-pre-wrap leading-relaxed' : ''}`}>
                     {steps[currentStep].content}
                   </p>
                 </div>

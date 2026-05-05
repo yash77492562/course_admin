@@ -206,6 +206,11 @@ export function HLSVideoPlayer({
               const parent = this.options_.parent;
               const player = this.player();
               
+              if (!player) {
+                console.warn('Player not available');
+                return;
+              }
+              
               // Save current time before switching
               const currentTime = player.currentTime();
               const wasPaused = player.paused();
@@ -243,7 +248,7 @@ export function HLSVideoPlayer({
               this.el().classList.add('vjs-selected');
               this.el().setAttribute('aria-checked', 'true');
               this.isCurrentlySelected = true;
-              this.selected(true);
+              (this as any).selected(true);
               
               console.log('✅ Selection updated - only', this.options_.label, 'should be selected');
               
@@ -277,10 +282,10 @@ export function HLSVideoPlayer({
                 
                 // Force immediate quality switch by triggering a seek
                 const tech = player.tech({ IWillNotUseThisInPlugins: true });
-                if (tech && tech.vhs) {
+                if (tech && (tech as any).vhs) {
                   // Clear the buffer to force reload with new quality
                   try {
-                    const mediaSource = tech.vhs.mediaSource;
+                    const mediaSource = (tech as any).vhs.mediaSource;
                     if (mediaSource && mediaSource.sourceBuffers) {
                       for (let i = 0; i < mediaSource.sourceBuffers.length; i++) {
                         const sourceBuffer = mediaSource.sourceBuffers[i];
@@ -315,8 +320,8 @@ export function HLSVideoPlayer({
                   // Seek to current position to force reload
                   player.currentTime(currentTime);
                   
-                  if (!wasPaused) {
-                    player.play().catch((err: Error) => {
+                  if (!wasPaused && player) {
+                    player.play()?.catch((err: Error) => {
                       console.warn('⚠️ Autoplay after quality change failed:', err);
                     });
                   }
@@ -329,10 +334,10 @@ export function HLSVideoPlayer({
           class QualityMenuButton extends MenuButton {
             private selectedQualityValue: string | number = 'auto';
             
-            constructor(player: videojs.Player, options: any) {
+            constructor(player: any, options: any) {
               super(player, options);
               this.addClass('vjs-quality-selector');
-              this.controlText('Quality');
+              (this as any).controlText('Quality');
               
               // Update button label when quality changes
               const qualityLevels = player.qualityLevels();
@@ -353,7 +358,7 @@ export function HLSVideoPlayer({
             }
             
             updateLabel() {
-              const qualityLevels = this.player().qualityLevels();
+              const qualityLevels = (this.player() as any).qualityLevels();
               let currentQuality = 'Auto';
               
               // Count enabled qualities
@@ -385,7 +390,7 @@ export function HLSVideoPlayer({
             }
             
             createItems() {
-              const qualityLevels = this.player().qualityLevels();
+              const qualityLevels = (this.player() as any).qualityLevels();
               const items = [];
               const selectedValue = this.selectedQualityValue;
               
@@ -476,9 +481,9 @@ export function HLSVideoPlayer({
       
       // Track segment loading to verify quality switching
       const tech = player.tech({ IWillNotUseThisInPlugins: true });
-      if (tech && tech.vhs) {
-        tech.vhs.on('loadedplaylist', () => {
-          const qualityLevels = player.qualityLevels();
+      if (tech && (tech as any).vhs) {
+        (tech as any).vhs.on('loadedplaylist', () => {
+          const qualityLevels = (player as any).qualityLevels();
           console.log('📋 Playlist loaded, current quality levels:');
           for (let i = 0; i < qualityLevels.length; i++) {
             const level = qualityLevels[i];

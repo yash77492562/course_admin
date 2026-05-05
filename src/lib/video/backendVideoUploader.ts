@@ -1,17 +1,15 @@
 /**
- * Backend Video Uploader
- * Uploads video chunks to backend for processing
- * Listens to SSE for real-time progress updates
+ * Backend Video Uploader - NEW SYSTEM
+ * Synced with backend /api/video-processing endpoints
+ * 
+ * Flow:
+ * 1. Analyze video (browser-side for instant feedback)
+ * 2. Send file to backend /api/video-processing/analyze
+ * 3. Start processing with /api/video-processing/process
+ * 4. Poll /api/video-processing/progress/:videoId for real-time updates
  */
 
-const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
-
-const BACKEND_PORTS = {
-  '460p': 'http://localhost:3010',
-  '720p': 'http://localhost:3011',
-  '1080p': 'http://localhost:3012',
-  process: 'http://localhost:3013',
-};
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3002';
 
 export interface UploadProgress {
   quality: string;
@@ -36,11 +34,19 @@ export interface ProcessingProgress {
   error?: string;
   videoUrls?: Record<string, string>;
   thumbnailUrl?: string;
+  masterPlaylistUrl?: string;
+  // NEW: Step-based progress
+  currentStep?: number;
+  stepProgress?: number;
+  segmentsUploaded?: number;
+  totalSegments?: number;
 }
 
 export class BackendVideoUploader {
+  private pollInterval: NodeJS.Timeout | null = null;
+
   /**
-   * Analyze video to determine available qualities
+   * Analyze video (browser-side for instant feedback)
    */
   async analyzeVideo(file: File): Promise<{
     width: number;
@@ -107,8 +113,7 @@ export class BackendVideoUploader {
 
   /**
    * Upload video to backend for processing
-   * Uploads to all quality ports in PARALLEL
-   * Listens to SSE for real-time processing progress
+   * NEW SYSTEM: Uses /api/video-processing endpoints
    */
   async uploadVideo(
     file: File,
@@ -116,148 +121,290 @@ export class BackendVideoUploader {
     lessonName: string,
     qualities: string[],
     onUploadProgress?: (progress: UploadProgress[]) => void,
-    onProcessingProgress?: (progress: ProcessingProgress) => void
-  ): Promise<void> {
-    console.log(`🚀 Starting upload for ${qualities.length} qualities in PARALLEL`);
+    onProcessingProgress?: (progress: ProcessingProgress) => void,
+    courseId?: string,
+    moduleName?: string
+  ): Promise<{ lessonId: string; jobId: string }> {
+    console.log('🚀 Starting NEW video upload system');
+    console.log('   File:', file.name, `(${(file.size / 1024 / 1024).toFixed(2)} MB)`);
+    console.log('   Qualities:', qualities);
 
-    // Upload to all quality ports in parallel
-    const uploadPromises = qualities.map(quality =>
-      this.uploadToQuality(file, lessonId, quality, onUploadProgress)
-    );
-
-    const uploadIds = await Promise.all(uploadPromises);
-
-    console.log('✅ All uploads complete, starting processing...');
-
-    // Trigger processing
-    await this.triggerProcessing(uploadIds, lessonId, lessonName);
-
-    console.log('✅ Video processing started, listening for progress...');
-
-    // Listen to SSE for processing progress
-    if (onProcessingProgress) {
-      this.listenToProcessingProgress(lessonId, onProcessingProgress);
-    }
-  }
-
-  /**
-   * Listen to SSE for real-time processing progress
-   */
-  private listenToProcessingProgress(
-    lessonId: string,
-    onProgress: (progress: ProcessingProgress) => void
-  ): void {
-    const eventSource = new EventSource(`${BACKEND_PORTS.process}/video-process/status/${lessonId}`);
-
-    eventSource.onmessage = (event) => {
-      try {
-        const progress: ProcessingProgress = JSON.parse(event.data);
-        onProgress(progress);
-
-        // Close connection when complete or error
-        if (progress.status === 'complete' || progress.status === 'error') {
-          eventSource.close();
-        }
-      } catch (error) {
-        console.error('Failed to parse SSE message:', error);
-      }
-    };
-
-    eventSource.onerror = (error) => {
-      console.error('SSE connection error:', error);
-      eventSource.close();
-    };
-  }
-
-  /**
-   * Upload to a specific quality port
-   */
-  private async uploadToQuality(
-    file: File,
-    lessonId: string,
-    quality: string,
-    onProgress?: (progress: UploadProgress[]) => void
-  ): Promise<string> {
-    const port = BACKEND_PORTS[quality as keyof typeof BACKEND_PORTS];
-    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
-
-    // Initiate upload
-    const initiateResponse = await fetch(`${port}/video-upload-${quality}/initiate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        lessonId,
-        fileName: file.name,
-        fileSize: file.size,
-        quality,
-      }),
-    });
-
-    if (!initiateResponse.ok) {
-      throw new Error(`Failed to initiate ${quality} upload`);
-    }
-
-    const { uploadId } = await initiateResponse.json();
-
-    // Upload chunks
-    for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
-      const start = chunkIndex * CHUNK_SIZE;
-      const end = Math.min(start + CHUNK_SIZE, file.size);
-      const chunk = file.slice(start, end);
-
+    try {
+      // Step 1: Send file to backend for analysis
+      console.log('📤 Step 1: Sending file to backend for analysis...');
       const formData = new FormData();
-      formData.append('chunk', chunk);
-      formData.append('uploadId', uploadId);
-      formData.append('chunkIndex', chunkIndex.toString());
-      formData.append('totalChunks', totalChunks.toString());
-      formData.append('quality', quality);
+      formData.append('file', file);
 
-      const chunkResponse = await fetch(`${port}/video-upload-${quality}/chunk`, {
+      const analyzeResponse = await fetch(`${API_BASE}/api/video-processing/analyze`, {
         method: 'POST',
         body: formData,
       });
 
-      if (!chunkResponse.ok) {
-        throw new Error(`Failed to upload ${quality} chunk ${chunkIndex}`);
+      if (!analyzeResponse.ok) {
+        const error = await analyzeResponse.json();
+        throw new Error(error.message || 'Failed to analyze video');
       }
 
-      // Report progress
-      if (onProgress) {
-        onProgress([{
-          quality,
-          progress: ((chunkIndex + 1) / totalChunks) * 100,
-          status: chunkIndex + 1 === totalChunks ? 'complete' : 'uploading',
-          chunksUploaded: chunkIndex + 1,
-          totalChunks,
+      const { uploadId, analysis } = await analyzeResponse.json();
+      console.log('✅ Analysis complete, uploadId:', uploadId);
+      console.log('   Resolution:', `${analysis.width}x${analysis.height}`);
+      console.log('   Duration:', `${analysis.duration}s`);
+
+      // Simulate upload progress (file is already uploaded in analyze step)
+      if (onUploadProgress) {
+        onUploadProgress([{
+          quality: qualities[0],
+          progress: 100,
+          status: 'complete',
+          chunksUploaded: 1,
+          totalChunks: 1,
         }]);
       }
 
-      console.log(`${quality}: Chunk ${chunkIndex + 1}/${totalChunks} uploaded`);
-    }
+      // Step 2: Start processing
+      console.log('📤 Step 2: Starting video processing...');
+      const processResponse = await fetch(`${API_BASE}/api/video-processing/process`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          uploadId,
+          lessonId, // Frontend temp ID (backend will replace with MongoDB ObjectID)
+          lessonName,
+          qualities,
+          courseId,
+          moduleName,
+        }),
+      });
 
-    return uploadId;
+      if (!processResponse.ok) {
+        const error = await processResponse.json();
+        throw new Error(error.message || 'Failed to start processing');
+      }
+
+      const { lessonId: newLessonId, jobId, bullmqJobId } = await processResponse.json();
+      console.log('✅ Processing started!');
+      console.log('   NEW lessonId (MongoDB ObjectID):', newLessonId);
+      console.log('   jobId:', jobId);
+      console.log('   bullmqJobId:', bullmqJobId);
+
+      // Step 3: Poll for progress with NEW lessonId
+      if (onProcessingProgress) {
+        console.log('📊 Step 3: Starting progress polling with NEW lessonId...');
+        this.pollProgress(newLessonId, onProcessingProgress);
+      }
+
+      return { lessonId: newLessonId, jobId };
+    } catch (error) {
+      console.error('❌ Upload failed:', error);
+      throw error;
+    }
   }
 
   /**
-   * Trigger video processing
+   * Poll for processing progress from Redis
+   * Uses NEW lessonId (MongoDB ObjectID) from backend
    */
-  private async triggerProcessing(
-    uploadIds: string[],
+  private pollProgress(
     lessonId: string,
-    lessonName: string
-  ): Promise<void> {
-    const response = await fetch(`${BACKEND_PORTS.process}/video-process/start`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        uploadIds,
-        lessonId,
-        lessonName,
-      }),
-    });
+    onProgress: (progress: ProcessingProgress) => void
+  ): void {
+    console.log('🔄 Starting progress polling for lessonId:', lessonId);
 
-    if (!response.ok) {
-      throw new Error('Failed to start video processing');
+    // Clear any existing poll
+    if (this.pollInterval) {
+      clearInterval(this.pollInterval);
+    }
+
+    // Poll every 1 second
+    this.pollInterval = setInterval(async () => {
+      try {
+        console.log('🔄 ========== POLLING PROGRESS ==========');
+        console.log('🔄 Fetching from:', `${API_BASE}/api/video-processing/progress/${lessonId}`);
+        
+        const response = await fetch(`${API_BASE}/api/video-processing/progress/${lessonId}`);
+        
+        if (!response.ok) {
+          console.warn('❌ Failed to fetch progress:', response.statusText);
+          return;
+        }
+
+        const data = await response.json();
+        
+        console.log('📥 Raw API Response:', JSON.stringify(data, null, 2));
+        
+        if (!data.success || !data.progress) {
+          console.log('⚠️ No progress data yet...');
+          return;
+        }
+
+        const redisProgress = data.progress;
+        console.log('📊 ========== REDIS PROGRESS DATA ==========');
+        console.log('   Status:', redisProgress.status);
+        console.log('   Progress:', redisProgress.progress + '%');
+        console.log('   Stage:', redisProgress.stage);
+        console.log('   CurrentStep:', redisProgress.currentStep);
+        console.log('   StepProgress:', redisProgress.stepProgress);
+        console.log('   Message:', redisProgress.message);
+        console.log('   SegmentsUploaded:', redisProgress.segmentsUploaded);
+        console.log('   TotalSegments:', redisProgress.totalSegments);
+        console.log('========================================');
+
+        // Convert Redis progress to ProcessingProgress format
+        const progress: ProcessingProgress = {
+          lessonId: redisProgress.lessonId || lessonId,
+          status: redisProgress.status === 'completed' || redisProgress.status === 'complete' ? 'complete' : 
+                  redisProgress.status === 'failed' ? 'error' : 
+                  redisProgress.status === 'processing' ? 'processing' : 'analyzing',
+          progress: redisProgress.progress || 0,
+          currentQuality: redisProgress.stage?.includes('460p') ? '460p' :
+                         redisProgress.stage?.includes('720p') ? '720p' :
+                         redisProgress.stage?.includes('1080p') ? '1080p' : undefined,
+          qualityProgress: [{
+            quality: '460p',
+            status: redisProgress.progress >= 100 ? 'complete' : 'processing',
+            progress: redisProgress.progress || 0,
+          }],
+          // CRITICAL FIX: Use Redis message directly (contains step info)
+          message: redisProgress.message || `${redisProgress.stage} - ${redisProgress.progress}%`,
+          error: redisProgress.status === 'failed' ? redisProgress.message : undefined,
+          // NEW: Pass step info from Redis
+          currentStep: redisProgress.currentStep,
+          stepProgress: redisProgress.stepProgress,
+          segmentsUploaded: redisProgress.segmentsUploaded,
+          totalSegments: redisProgress.totalSegments,
+        };
+
+        console.log('📤 ========== SENDING TO COMPONENT ==========');
+        console.log('   Progress:', progress.progress + '%');
+        console.log('   CurrentStep:', progress.currentStep);
+        console.log('   StepProgress:', progress.stepProgress);
+        console.log('   Message:', progress.message);
+        console.log('   Status:', progress.status);
+        console.log('========================================');
+
+        onProgress(progress);
+
+        // Stop polling when complete or error
+        if (progress.status === 'complete' || progress.status === 'error') {
+          console.log('✅ Processing finished, stopping poll');
+          if (this.pollInterval) {
+            clearInterval(this.pollInterval);
+            this.pollInterval = null;
+          }
+
+          // Fetch final video URLs if complete
+          if (progress.status === 'complete') {
+            await this.fetchFinalVideoUrls(lessonId, onProgress);
+          }
+        }
+      } catch (error) {
+        console.error('Error polling progress:', error);
+      }
+    }, 1000); // Poll every 1 second for real-time updates
+  }
+
+  /**
+   * Fetch final video URLs from database after processing completes
+   * CRITICAL FIX: Get URLs from VideoUploadJob, not Lesson (lesson doesn't exist yet)
+   */
+  private async fetchFinalVideoUrls(
+    lessonId: string,
+    onProgress: (progress: ProcessingProgress) => void
+  ): Promise<void> {
+    try {
+      console.log('📥 ========== FETCHING FINAL VIDEO URLS ==========');
+      console.log('   LessonId:', lessonId);
+      console.log('   Endpoint:', `${API_BASE}/api/video-processing/jobs/${lessonId}`);
+      
+      // CRITICAL FIX: Fetch from VideoUploadJob, not Lesson
+      // The lesson doesn't exist in database yet - it will be created when course is published
+      const response = await fetch(`${API_BASE}/api/video-processing/jobs/${lessonId}`);
+      
+      if (!response.ok) {
+        console.warn('⚠️ Failed to fetch video upload job data');
+        console.warn('   Status:', response.status, response.statusText);
+        // Don't fail - just send completion without URLs
+        onProgress({
+          lessonId,
+          status: 'complete',
+          progress: 100,
+          qualityProgress: [],
+          message: 'Processing complete! Video will be saved when you publish the course.',
+        });
+        return;
+      }
+
+      const { job } = await response.json();
+      
+      console.log('✅ Got VideoUploadJob data:');
+      console.log('   Job ID:', job.id);
+      console.log('   Status:', job.status);
+      console.log('   Video URLs:', JSON.stringify(job.videoUrls, null, 2));
+      console.log('   Thumbnail:', job.thumbnailUrl);
+      console.log('   Master Playlist:', job.masterPlaylistUrl);
+      
+      // CRITICAL: Check if videoUrls is actually populated
+      if (!job.videoUrls || Object.keys(job.videoUrls).length === 0) {
+        console.error('❌ VideoUploadJob has NO video URLs!');
+        console.error('   This means the worker did not store URLs correctly');
+        console.error('   Job data:', JSON.stringify(job, null, 2));
+      }
+      
+      if (job && job.videoUrls && job.thumbnailUrl) {
+        console.log('✅ Got final video URLs from VideoUploadJob:');
+        console.log('   Video URLs:', job.videoUrls);
+        console.log('   Thumbnail:', job.thumbnailUrl);
+        console.log('   Master Playlist:', job.masterPlaylistUrl);
+
+        // Send final progress with video URLs
+        const finalProgress = {
+          lessonId,
+          status: 'complete' as const,
+          progress: 100,
+          qualityProgress: [],
+          message: 'Processing complete!',
+          videoUrls: job.videoUrls,
+          thumbnailUrl: job.thumbnailUrl,
+          masterPlaylistUrl: job.masterPlaylistUrl,
+        };
+        
+        console.log('📤 Calling onProgress with final data:', JSON.stringify(finalProgress, null, 2));
+        onProgress(finalProgress);
+      } else {
+        console.warn('⚠️ VideoUploadJob found but missing video URLs');
+        console.warn('   Job:', JSON.stringify(job, null, 2));
+        onProgress({
+          lessonId,
+          status: 'complete',
+          progress: 100,
+          qualityProgress: [],
+          message: 'Processing complete! Video will be saved when you publish the course.',
+        });
+      }
+      
+      console.log('========================================');
+    } catch (error) {
+      console.error('❌ Error fetching final video URLs:', error);
+      console.error('   Error details:', error instanceof Error ? error.message : String(error));
+      // Don't fail - just send completion without URLs
+      onProgress({
+        lessonId,
+        status: 'complete',
+        progress: 100,
+        qualityProgress: [],
+        message: 'Processing complete! Video will be saved when you publish the course.',
+      });
+    }
+  }
+
+  /**
+   * Stop polling (cleanup)
+   */
+  stopPolling(): void {
+    if (this.pollInterval) {
+      clearInterval(this.pollInterval);
+      this.pollInterval = null;
+      console.log('🛑 Progress polling stopped');
     }
   }
 }

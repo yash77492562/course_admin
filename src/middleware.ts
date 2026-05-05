@@ -12,7 +12,7 @@ export function middleware(request: NextRequest) {
     "img-src 'self' https://*.r2.cloudflarestorage.com data: blob:",
     "media-src 'self' http://localhost:3002 https://*.r2.cloudflarestorage.com blob: data:",
     "frame-src 'self' blob: https://www.youtube.com https://youtube.com https://www.youtube-nocookie.com https://youtube-nocookie.com https://*.r2.cloudflarestorage.com",
-    "connect-src 'self' http://localhost:3002 https://*.r2.cloudflarestorage.com https://unpkg.com",
+    "connect-src 'self' http://localhost:3002 http://localhost:3010 http://localhost:3011 http://localhost:3012 https://*.r2.cloudflarestorage.com https://unpkg.com",
     "worker-src 'self' blob: https://unpkg.com",
     "child-src 'self' blob:",
     "font-src 'self' data:",

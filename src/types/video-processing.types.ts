@@ -34,12 +34,19 @@ export interface ProcessingStatus {
   error?: string;
   videoUrls?: Record<string, string>;
   thumbnailUrl?: string;
+  masterPlaylistUrl?: string;
+  // NEW: Step data from Redis
+  currentStep?: number;
+  stepProgress?: number;
+  segmentsUploaded?: number;
+  totalSegments?: number;
 }
 
 export interface ProcessVideoResponse {
   success: boolean;
   message?: string;
   lessonId?: string;
+  jobId?: string; // NEW: For database polling
   error?: string;
 }
 
