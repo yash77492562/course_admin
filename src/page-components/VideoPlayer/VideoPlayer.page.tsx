@@ -23,6 +23,8 @@ interface VideoData {
   hlsMasterPlaylist?: string; // HLS master playlist
   hlsQualities?: Record<string, string>; // HLS quality playlists
   thumbnail?: string; // Thumbnail URL
+  duration?: string; // Formatted duration (e.g., "10:30")
+  videoDuration?: number; // Duration in seconds
 }
 
 export function VideoPlayerPage({ videoId }: VideoPlayerPageProps) {
@@ -58,6 +60,8 @@ export function VideoPlayerPage({ videoId }: VideoPlayerPageProps) {
         // Handle wrapped response
         const lesson = result.data || result;
         console.log('Lesson data from backend:', lesson);
+        console.log('📊 Duration from API:', lesson.duration);
+        console.log('📊 Video Duration from API:', lesson.videoDuration);
         
         if (!lesson.videoUrl && !lesson.videoUrls && !lesson.hlsQualities) {
           setError('No video available for this lesson');
@@ -72,8 +76,12 @@ export function VideoPlayerPage({ videoId }: VideoPlayerPageProps) {
           videoUrls: lesson.videoUrls,
           hlsMasterPlaylist: lesson.hlsMasterPlaylist,
           hlsQualities: lesson.hlsQualities,
-          thumbnail: lesson.thumbnail
+          thumbnail: lesson.thumbnail,
+          duration: lesson.duration,
+          videoDuration: lesson.videoDuration
         });
+        
+        console.log('📊 VideoData set with duration:', lesson.duration, 'videoDuration:', lesson.videoDuration);
         
       } catch (err) {
         setError('Failed to load video');
@@ -159,6 +167,7 @@ export function VideoPlayerPage({ videoId }: VideoPlayerPageProps) {
               thumbnail={videoData.thumbnail}
               title={videoData.title}
               autoplay={false}
+              videoDuration={videoData.videoDuration}
               className="rounded-lg overflow-hidden"
             />
           </div>

@@ -16,6 +16,7 @@ interface HLSVideoPlayerProps {
   thumbnail?: string;
   title: string;
   autoplay?: boolean;
+  videoDuration?: number; // Duration in seconds from database
   className?: string;
   onNext?: () => void;
   onPrevious?: () => void;
@@ -28,6 +29,7 @@ export function HLSVideoPlayer({
   thumbnail,
   title,
   autoplay = false,
+  videoDuration,
   className = '',
   onNext,
   onPrevious
@@ -38,6 +40,8 @@ export function HLSVideoPlayer({
   const [isMounted, setIsMounted] = useState(false);
   const [currentQuality, setCurrentQuality] = useState<string>('Auto');
 
+  // Log videoDuration prop
+  console.log('🎬 HLSVideoPlayer received videoDuration:', videoDuration);
   // Ensure component is mounted before initializing Video.js
   useEffect(() => {
     setIsMounted(true);
@@ -72,6 +76,11 @@ export function HLSVideoPlayer({
         // Save current time before switching
         const currentTime = player.currentTime();
         const wasPaused = player.paused();
+        
+        // CRITICAL FIX: Save the current duration before switching
+        // The duration is already correct from the initial load
+        const savedDuration = player.duration();
+        console.log('💾 Saving duration before quality switch:', savedDuration);
         
         console.log('🎯 Manual quality clicked:', this.options_.label, 'URL:', this.options_.url);
         
@@ -166,39 +175,146 @@ export function HLSVideoPlayer({
           const handleLoadedMetadata = () => {
             console.log('📥 loadedmetadata - Metadata loaded for new quality');
             
-            // Don't wait for canplay - just start playing and then seek
-            // This prevents MEDIA_ERR_DECODE errors
-            console.log('🔄 Removing loading spinner...');
-            player.removeClass('vjs-waiting');
-            
-            // Start playing first (from beginning of nearest segment)
-            if (!wasPaused) {
-              console.log('▶️ Starting playback...');
-              const playPromise = player.play();
+            // CRITICAL FIX: For HLS, duration becomes available after playing starts
+            // We need to wait for 'loadeddata' or start playing to get duration
+            const proceedWithPlayback = () => {
+              console.log('🔄 Removing loading spinner...');
+              player.removeClass('vjs-waiting');
               
-              if (playPromise !== undefined) {
-                playPromise.then(() => {
-                  console.log('✅ Video playing, now seeking to:', currentTime);
-                  
-                  // Once playing, seek to the desired time
-                  // Use a small delay to ensure HLS has loaded some segments
-                  setTimeout(() => {
+              // Start playing first (from beginning of nearest segment)
+              if (!wasPaused) {
+                console.log('▶️ Starting playback...');
+                const playPromise = player.play();
+                
+                if (playPromise !== undefined) {
+                  playPromise.then(() => {
+                    console.log('✅ Video playing, now seeking to:', currentTime);
+                    
+                    // Once playing, seek to the desired time
+                    // Use a small delay to ensure HLS has loaded some segments
+                    setTimeout(() => {
+                      player.currentTime(currentTime);
+                      console.log('✅ Seeked to timestamp');
+                    }, 300);
+                  }).catch((err: Error) => {
+                    console.warn('⚠️ Autoplay failed:', err);
+                    player.removeClass('vjs-waiting');
+                    // Try seeking anyway
                     player.currentTime(currentTime);
-                    console.log('✅ Seeked to timestamp');
-                  }, 300);
-                }).catch((err: Error) => {
-                  console.warn('⚠️ Autoplay failed:', err);
-                  player.removeClass('vjs-waiting');
-                  // Try seeking anyway
+                  });
+                }
+              } else {
+                console.log('⏸️ Video was paused, seeking without playing');
+                // If paused, just seek
+                setTimeout(() => {
                   player.currentTime(currentTime);
-                });
+                }, 300);
               }
+            };
+            
+            // For HLS videos, wait for 'loadeddata' event which fires when first frame is loaded
+            // This ensures duration is available
+            const handleLoadedData = () => {
+              let duration = player.duration();
+              
+              // CRITICAL FIX: Use saved duration if new duration is not available
+              if ((!duration || isNaN(duration) || duration === Infinity) && savedDuration && !isNaN(savedDuration) && savedDuration !== Infinity) {
+                duration = savedDuration;
+                console.log('📥 loadeddata - Using saved duration:', duration, 'seconds');
+                
+                // Manually set the duration on the player's tech
+                const tech = player.tech({ IWillNotUseThisInPlugins: true });
+                if (tech && tech.el_) {
+                  // Store duration for Video.js to use
+                  (tech as any).duration_ = savedDuration;
+                  (player as any).cache_.duration = savedDuration;
+                }
+              } else {
+                console.log('📥 loadeddata - First frame loaded, duration:', duration);
+              }
+              
+              player.off('loadeddata', handleLoadedData);
+              player.off('durationchange', handleDurationChange);
+              player.off('playing', handlePlaying);
+              
+              if (duration && !isNaN(duration) && duration !== Infinity && duration > 0) {
+                console.log('✅ Duration available:', duration, 'seconds');
+              } else {
+                console.log('⚠️ Duration still not available, but proceeding');
+              }
+              
+              proceedWithPlayback();
+            };
+            
+            // Sometimes duration only becomes available after video starts playing
+            const handlePlaying = () => {
+              const duration = player.duration();
+              console.log('▶️ playing event - duration:', duration);
+              
+              if (duration && !isNaN(duration) && duration !== Infinity && duration > 0) {
+                console.log('✅ Duration available after playing:', duration, 'seconds');
+                player.off('loadeddata', handleLoadedData);
+                player.off('durationchange', handleDurationChange);
+                player.off('playing', handlePlaying);
+                proceedWithPlayback();
+              }
+            };
+            
+            const handleDurationChange = () => {
+              const duration = player.duration();
+              console.log('🕐 Duration changed:', duration);
+              
+              if (duration && !isNaN(duration) && duration !== Infinity && duration > 0) {
+                console.log('✅ Duration available via durationchange:', duration, 'seconds');
+                player.off('loadeddata', handleLoadedData);
+                player.off('durationchange', handleDurationChange);
+                proceedWithPlayback();
+              }
+            };
+            
+            // Check if duration is already available
+            let duration = player.duration();
+            
+            // CRITICAL FIX: Use saved duration if new duration is not available
+            if ((!duration || isNaN(duration) || duration === Infinity) && savedDuration && !isNaN(savedDuration) && savedDuration !== Infinity) {
+              duration = savedDuration;
+              console.log('✅ Using saved duration:', duration, 'seconds');
+              
+              // Manually set the duration on the player's tech
+              const tech = player.tech({ IWillNotUseThisInPlugins: true });
+              if (tech && tech.el_) {
+                (tech as any).duration_ = savedDuration;
+                (player as any).cache_.duration = savedDuration;
+              }
+              
+              proceedWithPlayback();
+            } else if (duration && !isNaN(duration) && duration !== Infinity && duration > 0) {
+              console.log('✅ Duration already available from HLS:', duration, 'seconds');
+              proceedWithPlayback();
             } else {
-              console.log('⏸️ Video was paused, seeking without playing');
-              // If paused, just seek
+              console.log('⏳ Waiting for loadeddata, durationchange, or playing event...');
+              // Listen for all three events - whichever fires first with valid duration wins
+              player.one('loadeddata', handleLoadedData);
+              player.on('durationchange', handleDurationChange);
+              player.one('playing', handlePlaying);
+              
+              // Fallback timeout after 3 seconds
               setTimeout(() => {
-                player.currentTime(currentTime);
-              }, 300);
+                player.off('loadeddata', handleLoadedData);
+                player.off('durationchange', handleDurationChange);
+                player.off('playing', handlePlaying);
+                
+                const currentDuration = player.duration();
+                console.log('⏰ Timeout reached, duration:', currentDuration);
+                
+                if (!player.hasClass('vjs-waiting')) {
+                  // Already proceeded, do nothing
+                  return;
+                }
+                
+                console.log('⏰ Proceeding after timeout');
+                proceedWithPlayback();
+              }, 3000);
             }
           };
           
@@ -493,6 +609,14 @@ export function HLSVideoPlayer({
       }, () => {
         console.log('✅ Video.js player ready');
         setIsReady(true);
+        
+        // CRITICAL FIX: Set duration from database if available
+        // This ensures duration is always available, even before HLS metadata loads
+        if (videoDuration && videoDuration > 0) {
+          console.log('📊 Setting duration from database:', videoDuration, 'seconds');
+          // Store the database duration for use during quality switches
+          (player as any)._databaseDuration = videoDuration;
+        }
         
         // Unmute after a short delay to allow autoplay
         setTimeout(() => {

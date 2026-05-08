@@ -90,15 +90,86 @@ export class AdaptiveVideoPlayer {
 
       // Wait for new video to load
       await new Promise<void>((resolve, reject) => {
+        let resolved = false;
+        
         const onLoadedMetadata = () => {
-          this.videoElement.removeEventListener('loadedmetadata', onLoadedMetadata);
-          this.videoElement.removeEventListener('error', onError);
-          resolve();
+          console.log('📥 Metadata loaded for new quality');
+          
+          // For videos, wait for 'loadeddata' event which fires when first frame is loaded
+          const onLoadedData = () => {
+            if (resolved) return;
+            
+            const duration = this.videoElement.duration;
+            console.log('📥 loadeddata - First frame loaded, duration:', duration);
+            
+            this.videoElement.removeEventListener('loadedmetadata', onLoadedMetadata);
+            this.videoElement.removeEventListener('loadeddata', onLoadedData);
+            this.videoElement.removeEventListener('durationchange', onDurationChange);
+            this.videoElement.removeEventListener('error', onError);
+            
+            resolved = true;
+            resolve();
+          };
+          
+          const onDurationChange = () => {
+            if (resolved) return;
+            
+            const duration = this.videoElement.duration;
+            console.log('🕐 Duration changed:', duration);
+            
+            if (duration && !isNaN(duration) && duration !== Infinity && duration > 0) {
+              console.log('✅ Duration available via durationchange:', duration, 'seconds');
+              
+              this.videoElement.removeEventListener('loadedmetadata', onLoadedMetadata);
+              this.videoElement.removeEventListener('loadeddata', onLoadedData);
+              this.videoElement.removeEventListener('durationchange', onDurationChange);
+              this.videoElement.removeEventListener('error', onError);
+              
+              resolved = true;
+              resolve();
+            }
+          };
+          
+          // Check if duration is already available
+          const duration = this.videoElement.duration;
+          if (duration && !isNaN(duration) && duration !== Infinity && duration > 0) {
+            console.log('✅ Duration already available:', duration, 'seconds');
+            
+            this.videoElement.removeEventListener('loadedmetadata', onLoadedMetadata);
+            this.videoElement.removeEventListener('error', onError);
+            
+            resolved = true;
+            resolve();
+          } else {
+            console.log('⏳ Waiting for loadeddata or durationchange event...');
+            // Listen for both events
+            this.videoElement.addEventListener('loadeddata', onLoadedData);
+            this.videoElement.addEventListener('durationchange', onDurationChange);
+            
+            // Fallback timeout after 3 seconds
+            setTimeout(() => {
+              if (resolved) return;
+              
+              console.log('⏰ Timeout reached, proceeding anyway');
+              
+              this.videoElement.removeEventListener('loadedmetadata', onLoadedMetadata);
+              this.videoElement.removeEventListener('loadeddata', onLoadedData);
+              this.videoElement.removeEventListener('durationchange', onDurationChange);
+              this.videoElement.removeEventListener('error', onError);
+              
+              resolved = true;
+              resolve();
+            }, 3000);
+          }
         };
 
         const onError = () => {
+          if (resolved) return;
+          
           this.videoElement.removeEventListener('loadedmetadata', onLoadedMetadata);
           this.videoElement.removeEventListener('error', onError);
+          
+          resolved = true;
           reject(new Error('Failed to load video'));
         };
 

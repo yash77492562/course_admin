@@ -15,6 +15,7 @@ interface VideoPlayerWrapperProps {
   thumbnail?: string;
   title: string;
   autoplay?: boolean;
+  videoDuration?: number; // Duration in seconds from database
   className?: string;
   onNext?: () => void;
   onPrevious?: () => void;
@@ -29,6 +30,7 @@ export function VideoPlayerWrapper({
   thumbnail,
   title,
   autoplay = false,
+  videoDuration,
   className = '',
   onNext,
   onPrevious
@@ -55,6 +57,7 @@ export function VideoPlayerWrapper({
       thumbnail={thumbnail}
       title={title}
       autoplay={autoplay}
+      videoDuration={videoDuration}
       className={className}
       onNext={onNext}
       onPrevious={onPrevious}
