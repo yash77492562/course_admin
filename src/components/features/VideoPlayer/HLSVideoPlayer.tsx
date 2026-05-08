@@ -44,6 +44,369 @@ export function HLSVideoPlayer({
     return () => setIsMounted(false);
   }, []);
 
+  // Manual quality selector for individual playlists (no master playlist)
+  const addManualQualitySelector = (player: any, qualities: Record<string, string>) => {
+    const MenuButton = videojs.getComponent('MenuButton');
+    const MenuItem = videojs.getComponent('MenuItem');
+    
+    // Custom menu item for manual quality switching
+    class ManualQualityMenuItem extends MenuItem {
+      private isCurrentlySelected: boolean = false;
+      
+      constructor(player: any, options: any) {
+        super(player, options);
+        (this as any).selectable = true;
+        this.isCurrentlySelected = options.selected || false;
+        (this as any).selected(this.isCurrentlySelected);
+      }
+      
+      handleClick() {
+        const parent = this.options_.parent;
+        const player = this.player();
+        
+        if (!player) {
+          console.warn('Player not available');
+          return;
+        }
+        
+        // Save current time before switching
+        const currentTime = player.currentTime();
+        const wasPaused = player.paused();
+        
+        console.log('🎯 Manual quality clicked:', this.options_.label, 'URL:', this.options_.url);
+        
+        // Remove selection from all items
+        if (parent && parent.el) {
+          const allMenuItems = parent.el().querySelectorAll('.vjs-menu-item');
+          allMenuItems.forEach((item: Element) => {
+            item.classList.remove('vjs-selected');
+            item.setAttribute('aria-checked', 'false');
+          });
+        }
+        
+        // Add selection to this item
+        this.el().classList.add('vjs-selected');
+        this.el().setAttribute('aria-checked', 'true');
+        this.isCurrentlySelected = true;
+        (this as any).selected(true);
+        
+        console.log('✅ Selection updated - only', this.options_.label, 'should be selected');
+        
+        // Save selected value to parent
+        if (parent && typeof parent.setSelectedQuality === 'function') {
+          parent.setSelectedQuality(this.options_.label);
+        }
+        
+        // Handle Auto mode (don't switch source, just update label)
+        if (this.options_.isAuto) {
+          setCurrentQuality('Auto');
+          
+          // Update button label
+          if (parent && typeof parent.updateLabel === 'function') {
+            parent.updateLabel();
+            const iconPlaceholder = parent.el().querySelector('.vjs-icon-placeholder');
+            if (iconPlaceholder) {
+              iconPlaceholder.textContent = 'Auto';
+              console.log('🏷️ Button label updated to: Auto');
+            }
+          }
+          return; // Don't switch source for Auto
+        }
+        
+        // Show loading spinner
+        console.log('🔄 Adding loading spinner...');
+        player.addClass('vjs-waiting');
+        
+        // Switch video source for specific quality
+        try {
+          console.log('🔄 Switching video source to:', this.options_.url);
+          console.log('🔄 Current time before switch:', currentTime);
+          console.log('🔄 Was paused:', wasPaused);
+          
+          // CRITICAL FIX: Pause and reset before changing source
+          player.pause();
+          console.log('⏸️ Player paused');
+          
+          // CRITICAL: Clear any existing error state before switching
+          if (player.error()) {
+            console.log('🧹 Clearing existing error state');
+            player.error(null);
+          }
+          
+          // Get tech reference once for both buffer clearing and source changing
+          const tech = player.tech({ IWillNotUseThisInPlugins: true });
+          
+          // Clear source buffers to prevent conflicts
+          if (tech && (tech as any).vhs) {
+            try {
+              const vhs = (tech as any).vhs;
+              if (vhs.mediaSource && vhs.mediaSource.sourceBuffers) {
+                console.log('🧹 Clearing source buffers before quality switch');
+                for (let i = 0; i < vhs.mediaSource.sourceBuffers.length; i++) {
+                  const sourceBuffer = vhs.mediaSource.sourceBuffers[i];
+                  if (!sourceBuffer.updating && sourceBuffer.buffered.length > 0) {
+                    try {
+                      const start = sourceBuffer.buffered.start(0);
+                      const end = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
+                      if (end > start) {
+                        sourceBuffer.remove(start, end);
+                      }
+                    } catch (err) {
+                      console.warn('⚠️ Could not clear source buffer:', err);
+                    }
+                  }
+                }
+              }
+            } catch (err) {
+              console.warn('⚠️ Could not access source buffers:', err);
+            }
+          }
+          
+          // Set up event listener BEFORE changing source
+          const handleLoadedMetadata = () => {
+            console.log('📥 loadedmetadata - Metadata loaded for new quality');
+            
+            // Don't wait for canplay - just start playing and then seek
+            // This prevents MEDIA_ERR_DECODE errors
+            console.log('🔄 Removing loading spinner...');
+            player.removeClass('vjs-waiting');
+            
+            // Start playing first (from beginning of nearest segment)
+            if (!wasPaused) {
+              console.log('▶️ Starting playback...');
+              const playPromise = player.play();
+              
+              if (playPromise !== undefined) {
+                playPromise.then(() => {
+                  console.log('✅ Video playing, now seeking to:', currentTime);
+                  
+                  // Once playing, seek to the desired time
+                  // Use a small delay to ensure HLS has loaded some segments
+                  setTimeout(() => {
+                    player.currentTime(currentTime);
+                    console.log('✅ Seeked to timestamp');
+                  }, 300);
+                }).catch((err: Error) => {
+                  console.warn('⚠️ Autoplay failed:', err);
+                  player.removeClass('vjs-waiting');
+                  // Try seeking anyway
+                  player.currentTime(currentTime);
+                });
+              }
+            } else {
+              console.log('⏸️ Video was paused, seeking without playing');
+              // If paused, just seek
+              setTimeout(() => {
+                player.currentTime(currentTime);
+              }, 300);
+            }
+          };
+          
+          // Error handling - with recovery attempt
+          const handleError = (e: any) => {
+            const error = player.error();
+            
+            // Only log if it's not a recoverable error
+            if (!error || error.code !== 3) {
+              console.error('❌ Video error event:', e);
+              if (error) {
+                console.error('❌ Error code:', error.code);
+                console.error('❌ Error message:', error.message);
+              }
+            }
+            
+            // Remove loading spinner
+            player.removeClass('vjs-waiting');
+            
+            // Try to recover from MEDIA_ERR_DECODE silently
+            if (error && error.code === 3) {
+              console.log('🔄 Recovering from quality switch error...');
+              
+              // Clear the error to make player interactive again
+              player.error(null);
+              
+              // Remove any error classes
+              player.removeClass('vjs-error');
+              
+              // Ensure controls are enabled
+              player.controls(true);
+              
+              // Try reloading after a short delay
+              setTimeout(() => {
+                player.load();
+              }, 500);
+            }
+          };
+          
+          // Register event listeners
+          player.one('loadedmetadata', handleLoadedMetadata);
+          player.one('error', handleError);
+          
+          console.log('✅ Event listeners registered');
+          
+          // Change source using the tech directly for more reliable loading (reuse tech from above)
+          if (tech && tech.el_) {
+            console.log('🔧 Using tech to change source');
+            tech.el_.src = this.options_.url;
+            tech.el_.load();
+            console.log('✅ Tech source changed and loaded');
+          } else {
+            // Fallback to normal method
+            console.log('🔧 Using player.src() method');
+            player.src({
+              src: this.options_.url,
+              type: 'application/x-mpegURL'
+            });
+            player.load();
+            console.log('✅ Player source changed and loaded');
+          }
+          
+          // Update button label
+          if (parent && typeof parent.updateLabel === 'function') {
+            parent.updateLabel();
+            const iconPlaceholder = parent.el().querySelector('.vjs-icon-placeholder');
+            if (iconPlaceholder) {
+              iconPlaceholder.textContent = this.options_.label;
+              console.log('🏷️ Button label updated to:', this.options_.label);
+            }
+          }
+          
+          setCurrentQuality(this.options_.label);
+          
+          // Fallback: Remove loading spinner after 10 seconds
+          setTimeout(() => {
+            if (player.hasClass('vjs-waiting')) {
+              console.log('⏰ Fallback timeout - removing loading spinner');
+              player.removeClass('vjs-waiting');
+            }
+          }, 10000);
+          
+        } catch (error) {
+          console.error('❌ Error switching quality:', error);
+          player.removeClass('vjs-waiting');
+        }
+      }
+    }
+    
+    // Custom menu button for manual quality selector
+    class ManualQualityMenuButton extends MenuButton {
+      private selectedQualityValue: string = '';
+      private qualities: Record<string, string>;
+      
+      constructor(player: any, options: any) {
+        // CRITICAL: Set qualities BEFORE calling super
+        // because super() calls createItems() which needs this.qualities
+        const qualities = options.qualities || {};
+        
+        super(player, { ...options, qualities });
+        
+        this.qualities = qualities;
+        this.addClass('vjs-quality-selector');
+        (this as any).controlText('Quality');
+        
+        console.log('🎬 ManualQualityMenuButton constructor - qualities:', this.qualities);
+        console.log('🎬 Number of qualities:', Object.keys(this.qualities).length);
+        
+        // Set initial quality to Auto
+        this.selectedQualityValue = 'Auto';
+        
+        // Set initial label
+        setTimeout(() => this.updateLabel(), 100);
+      }
+      
+      setSelectedQuality(value: string) {
+        this.selectedQualityValue = value;
+      }
+      
+      getSelectedQuality() {
+        return this.selectedQualityValue;
+      }
+      
+      updateLabel() {
+        const currentQuality = this.selectedQualityValue || 'Auto';
+        
+        // Update button text - create a text node to replace the entire content
+        const controlTextEl = this.el().querySelector('.vjs-icon-placeholder');
+        if (controlTextEl) {
+          // Clear all content and set only the quality text
+          controlTextEl.textContent = currentQuality;
+        }
+        
+        // Update aria-label
+        this.el().setAttribute('aria-label', `Quality: ${currentQuality}`);
+      }
+      
+      createItems() {
+        const items: any[] = [];
+        
+        // Get qualities from options since this is called during super() construction
+        const qualities = (this as any).options_?.qualities || this.qualities || {};
+        
+        console.log('📋 createItems called - qualities:', qualities);
+        console.log('📋 Number of qualities:', Object.keys(qualities).length);
+        
+        // Safety check
+        if (!qualities || typeof qualities !== 'object' || Object.keys(qualities).length === 0) {
+          console.error('❌ Qualities not available in createItems');
+          return items;
+        }
+        
+        // Add "Auto" option first (plays highest quality by default)
+        items.push(new ManualQualityMenuItem(this.player(), {
+          label: 'Auto',
+          url: '', // Empty URL means use current/default
+          selected: this.selectedQualityValue === 'Auto',
+          parent: this,
+          isAuto: true
+        }));
+        
+        // Sort qualities by resolution (descending)
+        const qualityKeys = Object.keys(qualities).sort((a, b) => {
+          const aNum = parseInt(a);
+          const bNum = parseInt(b);
+          return bNum - aNum;
+        });
+        
+        qualityKeys.forEach(quality => {
+          items.push(new ManualQualityMenuItem(this.player(), {
+            label: quality,
+            url: qualities[quality],
+            selected: quality === this.selectedQualityValue,
+            parent: this
+          }));
+        });
+        
+        console.log('📋 Manual quality menu items created:', items.length);
+        
+        return items;
+      }
+      
+      buildCSSClass() {
+        return `vjs-quality-selector ${super.buildCSSClass()}`;
+      }
+    }
+    
+    // Register the component
+    videojs.registerComponent('ManualQualityMenuButton', ManualQualityMenuButton);
+    
+    // Add quality button to control bar
+    const controlBar = player.getChild('controlBar');
+    if (controlBar) {
+      // Check if quality selector already exists to prevent duplicates
+      const existingQualitySelector = controlBar.getChild('ManualQualityMenuButton');
+      if (existingQualitySelector) {
+        console.log('⚠️ Quality selector already exists, removing old one');
+        controlBar.removeChild(existingQualitySelector);
+      }
+      
+      const fullscreenToggle = controlBar.getChild('fullscreenToggle');
+      const fullscreenIndex = controlBar.children().indexOf(fullscreenToggle);
+      
+      controlBar.addChild('ManualQualityMenuButton', { qualities }, fullscreenIndex);
+      console.log('✅ Manual quality selector added to control bar');
+    }
+  };
+
   useEffect(() => {
     // Wait for component to be mounted
     if (!isMounted) {
@@ -147,12 +510,38 @@ export function HLSVideoPlayer({
       });
 
       playerRef.current = player;
+      
+      // Suppress Video.js's internal error logging for MEDIA_ERR_DECODE (code 3)
+      // Override the log.error function to filter out code 3 errors
+      const originalLogError = videojs.log.error;
+      videojs.log.error = function(...args: any[]) {
+        // Check if this is a MEDIA_ERR_DECODE error
+        const errorMessage = args.join(' ');
+        if (errorMessage.includes('CODE:3') || errorMessage.includes('MEDIA_ERR_DECODE')) {
+          // Silently ignore this error
+          return;
+        }
+        // Log all other errors normally
+        return originalLogError.apply(this, args);
+      };
 
       // Add quality selector after source is loaded and quality levels are available
-      player.on('loadedmetadata', () => {
+      // Use 'one' instead of 'on' to prevent duplicate quality selectors
+      player.one('loadedmetadata', () => {
         console.log('📊 Video metadata loaded');
         
-        // Initialize quality levels plugin
+        // CRITICAL FIX: If we have hlsQualities prop, use manual quality selector
+        // because individual playlists don't have resolution metadata
+        if (hlsQualities && Object.keys(hlsQualities).length > 1) {
+          console.log('📺 Using manual quality selector for individual playlists');
+          console.log('📺 Available qualities:', Object.keys(hlsQualities).join(', '));
+          
+          // Create manual quality selector
+          addManualQualitySelector(player, hlsQualities);
+          return;
+        }
+        
+        // Initialize quality levels plugin for master playlist
         const qualityLevels = (player as any).qualityLevels();
         
         console.log('🔍 Quality Levels Object:', qualityLevels);
@@ -451,11 +840,13 @@ export function HLSVideoPlayer({
         }
       });
 
-      // Handle errors
+      // Handle errors - suppress MEDIA_ERR_DECODE during quality switching
       player.on('error', (error: any) => {
-        console.error('❌ Video.js error:', error);
         const errorDisplay = player.error();
-        if (errorDisplay) {
+        
+        // Only log non-recoverable errors (not MEDIA_ERR_DECODE which we handle)
+        if (errorDisplay && errorDisplay.code !== 3) {
+          console.error('❌ Video.js error:', error);
           console.error('Error code:', errorDisplay.code);
           console.error('Error message:', errorDisplay.message);
         }

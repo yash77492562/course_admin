@@ -123,7 +123,8 @@ export class BackendVideoUploader {
     onUploadProgress?: (progress: UploadProgress[]) => void,
     onProcessingProgress?: (progress: ProcessingProgress) => void,
     courseId?: string,
-    moduleName?: string
+    moduleName?: string,
+    moduleId?: string // NEW: For lesson creation in backend
   ): Promise<{ lessonId: string; jobId: string }> {
     console.log('🚀 Starting NEW video upload system');
     console.log('   File:', file.name, `(${(file.size / 1024 / 1024).toFixed(2)} MB)`);
@@ -163,13 +164,17 @@ export class BackendVideoUploader {
 
       // Step 2: Start processing
       console.log('📤 Step 2: Starting video processing...');
+      console.log('   Module ID:', moduleId);
       const processResponse = await fetch(`${API_BASE}/api/video-processing/process`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           uploadId,
-          lessonId, // Frontend temp ID (backend will replace with MongoDB ObjectID)
+          lessonId, // Frontend temp ID (backend will create real one if needed)
           lessonName,
+          moduleId, // NEW: For lesson creation in backend
+          description: '', // Optional
+          order: 0, // Optional
           qualities,
           courseId,
           moduleName,
@@ -304,8 +309,8 @@ export class BackendVideoUploader {
   }
 
   /**
-   * Fetch final video URLs from database after processing completes
-   * CRITICAL FIX: Get URLs from VideoUploadJob, not Lesson (lesson doesn't exist yet)
+   * Fetch final video URLs from Lesson table after processing completes
+   * CRITICAL FIX: Get URLs from Lesson, not VideoUploadJob
    */
   private async fetchFinalVideoUrls(
     lessonId: string,
@@ -316,12 +321,11 @@ export class BackendVideoUploader {
       console.log('   LessonId:', lessonId);
       console.log('   Endpoint:', `${API_BASE}/api/video-processing/jobs/${lessonId}`);
       
-      // CRITICAL FIX: Fetch from VideoUploadJob, not Lesson
-      // The lesson doesn't exist in database yet - it will be created when course is published
+      // CRITICAL FIX: Fetch from Lesson, not VideoUploadJob
       const response = await fetch(`${API_BASE}/api/video-processing/jobs/${lessonId}`);
       
       if (!response.ok) {
-        console.warn('⚠️ Failed to fetch video upload job data');
+        console.warn('⚠️ Failed to fetch lesson data');
         console.warn('   Status:', response.status, response.statusText);
         // Don't fail - just send completion without URLs
         onProgress({
@@ -329,15 +333,15 @@ export class BackendVideoUploader {
           status: 'complete',
           progress: 100,
           qualityProgress: [],
-          message: 'Processing complete! Video will be saved when you publish the course.',
+          message: 'Processing complete! Video URLs will be available shortly.',
         });
         return;
       }
 
       const { job } = await response.json();
       
-      console.log('✅ Got VideoUploadJob data:');
-      console.log('   Job ID:', job.id);
+      console.log('✅ Got Lesson data:');
+      console.log('   Lesson ID:', job.id);
       console.log('   Status:', job.status);
       console.log('   Video URLs:', JSON.stringify(job.videoUrls, null, 2));
       console.log('   Thumbnail:', job.thumbnailUrl);
@@ -345,13 +349,13 @@ export class BackendVideoUploader {
       
       // CRITICAL: Check if videoUrls is actually populated
       if (!job.videoUrls || Object.keys(job.videoUrls).length === 0) {
-        console.error('❌ VideoUploadJob has NO video URLs!');
+        console.error('❌ Lesson has NO video URLs!');
         console.error('   This means the worker did not store URLs correctly');
         console.error('   Job data:', JSON.stringify(job, null, 2));
       }
       
       if (job && job.videoUrls && job.thumbnailUrl) {
-        console.log('✅ Got final video URLs from VideoUploadJob:');
+        console.log('✅ Got final video URLs from Lesson:');
         console.log('   Video URLs:', job.videoUrls);
         console.log('   Thumbnail:', job.thumbnailUrl);
         console.log('   Master Playlist:', job.masterPlaylistUrl);
@@ -371,14 +375,14 @@ export class BackendVideoUploader {
         console.log('📤 Calling onProgress with final data:', JSON.stringify(finalProgress, null, 2));
         onProgress(finalProgress);
       } else {
-        console.warn('⚠️ VideoUploadJob found but missing video URLs');
+        console.warn('⚠️ Lesson found but missing video URLs');
         console.warn('   Job:', JSON.stringify(job, null, 2));
         onProgress({
           lessonId,
           status: 'complete',
           progress: 100,
           qualityProgress: [],
-          message: 'Processing complete! Video will be saved when you publish the course.',
+          message: 'Processing complete! Video URLs will be available shortly.',
         });
       }
       
@@ -392,7 +396,7 @@ export class BackendVideoUploader {
         status: 'complete',
         progress: 100,
         qualityProgress: [],
-        message: 'Processing complete! Video will be saved when you publish the course.',
+        message: 'Processing complete! Video URLs will be available shortly.',
       });
     }
   }

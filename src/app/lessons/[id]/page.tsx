@@ -15,6 +15,11 @@ const PDFViewerSimple = dynamic(
   { ssr: false }
 );
 
+const QuizViewer = dynamic(
+  () => import('@/components/features/QuizViewer/QuizViewer').then(mod => ({ default: mod.QuizViewer })),
+  { ssr: false }
+);
+
 export default function LessonPage() {
   const params = useParams();
   const lessonId = params.id as string;
@@ -75,7 +80,15 @@ export default function LessonPage() {
       <div className="container mx-auto py-8">
         {/* Content Container */}
         <div className="w-full max-w-6xl mx-auto">
-          {contentType === 'PDF' && lessonData.pdfUrl ? (
+          {contentType === 'QUIZ' && lessonData.quizData ? (
+            // Quiz Viewer
+            <div className="bg-white rounded-lg overflow-hidden">
+              <QuizViewer
+                quizData={lessonData.quizData}
+                title={lessonData.title}
+              />
+            </div>
+          ) : contentType === 'PDF' && lessonData.pdfUrl ? (
             // PDF Viewer
             <div className="bg-white rounded-lg overflow-hidden" style={{ minHeight: '80vh' }}>
               <PDFViewerSimple
@@ -116,6 +129,11 @@ export default function LessonPage() {
           
           {/* Content Type Badge */}
           <div className="mt-4 flex items-center gap-2">
+            {contentType === 'QUIZ' && (
+              <span className="bg-purple-600 text-white px-3 py-1 rounded-full text-sm">
+                📝 Quiz
+              </span>
+            )}
             {contentType === 'PDF' && (
               <span className="bg-purple-600 text-white px-3 py-1 rounded-full text-sm">
                 📄 PDF Lecture

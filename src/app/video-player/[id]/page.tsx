@@ -14,11 +14,16 @@ const PDFViewerSimple = dynamic(
   { ssr: false }
 );
 
+const QuizViewer = dynamic(
+  () => import('@/components/features/QuizViewer/QuizViewer').then(mod => ({ default: mod.QuizViewer })),
+  { ssr: false }
+);
+
 interface LessonData {
   id: string;
   title: string;
   description?: string;
-  contentType: 'VIDEO' | 'PDF';
+  contentType: 'VIDEO' | 'PDF' | 'QUIZ';
   videoType?: 'UPLOAD' | 'YOUTUBE';
   videoUrl?: string;
   videoUrls?: Record<string, string>;
@@ -27,6 +32,7 @@ interface LessonData {
   thumbnail?: string;
   pdfUrl?: string;
   pdfPassword?: string;
+  quizData?: any;
   order: number;
   module: {
     id: string;
@@ -43,7 +49,7 @@ interface LessonData {
           id: string;
           title: string;
           order: number;
-          contentType: 'VIDEO' | 'PDF';
+          contentType: 'VIDEO' | 'PDF' | 'QUIZ';
         }>;
       }>;
     };
@@ -72,7 +78,7 @@ export default function VideoPlayerPage() {
       try {
         // Fetch directly from backend API to get fresh proxy URLs
         const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3002';
-        const response = await fetch(`${apiUrl}/courses/lessons/${lessonId}`, {
+        const response = await fetch(`${apiUrl}/lessons/${lessonId}`, {
           cache: 'no-store',
         });
         const result = await response.json();
@@ -213,6 +219,33 @@ export default function VideoPlayerPage() {
   console.log('Has Full Navigation:', hasFullNavigation);
 
   if (!hasFullNavigation) {
+    // QUIZ content
+    if (contentType === 'QUIZ') {
+      if (!lessonData.quizData) {
+        return (
+          <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+            <div className="text-center">
+              <div className="text-red-600 text-xl mb-4">No quiz available</div>
+              <div className="text-gray-600 text-sm">This lesson does not have quiz questions yet.</div>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="min-h-screen bg-gray-50 py-8">
+          <QuizViewer
+            quizData={lessonData.quizData}
+            title={lessonData.title}
+            onComplete={(score, total) => {
+              console.log(`Quiz completed: ${score}/${total}`);
+            }}
+          />
+        </div>
+      );
+    }
+
+    // PDF content
     if (contentType === 'PDF') {
       if (!lessonData.pdfUrl) {
         return (
@@ -259,9 +292,19 @@ export default function VideoPlayerPage() {
     if (!isYouTube && !hasHLS && !hasMP4) {
       return (
         <div className="min-h-screen bg-black flex items-center justify-center">
-          <div className="text-center">
+          <div className="text-center max-w-md">
             <div className="text-red-400 text-xl mb-4">No video source available</div>
-            <div className="text-gray-400 text-sm">Please upload and publish the video from the course editor.</div>
+            <div className="text-gray-400 text-sm mb-4">
+              This lesson was created but the video was never uploaded or processing failed.
+            </div>
+            <div className="text-gray-500 text-xs">
+              <p className="mb-2">To fix this:</p>
+              <ul className="text-left list-disc list-inside space-y-1">
+                <li>Go back to the course editor</li>
+                <li>Delete this lesson and create a new one with a video</li>
+                <li>Or upload a video for this lesson</li>
+              </ul>
+            </div>
           </div>
         </div>
       );
@@ -347,7 +390,7 @@ export default function VideoPlayerPage() {
                               className={`w-full px-4 py-2 text-left text-sm transition-colors ${lesson.id === lessonId ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'}`}
                             >
                               <div className="flex items-center gap-2">
-                                <span>{lesson.contentType === 'PDF' ? '📄' : '🎥'}</span>
+                                <span>{lesson.contentType === 'QUIZ' ? '📝' : lesson.contentType === 'PDF' ? '📄' : '🎥'}</span>
                                 <span className="truncate">{lesson.title}</span>
                               </div>
                             </button>
@@ -395,6 +438,109 @@ export default function VideoPlayerPage() {
     );
   }
 
+  // QUIZ content with navigation
+  if (contentType === 'QUIZ') {
+    if (!lessonData.quizData) {
+      return (
+        <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+          <div className="text-center">
+            <div className="text-red-600 text-xl mb-4">No quiz available</div>
+            <div className="text-gray-600 text-sm">This lesson does not have quiz questions yet.</div>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="flex h-screen bg-gray-900">
+        <div className="w-80 bg-gray-800 border-r border-gray-700 overflow-y-auto">
+          <div className="p-4">
+            <h2 className="text-white text-lg font-semibold mb-4">
+              {lessonData.module.course.title}
+            </h2>
+            
+            <div className="space-y-2">
+              {lessonData.module.course.modules
+                .sort((a, b) => a.order - b.order)
+                .map((module) => (
+                  <div key={module.id} className="border border-gray-700 rounded-lg overflow-hidden">
+                    <button
+                      onClick={() => toggleModule(module.id)}
+                      className="w-full px-4 py-3 bg-gray-750 hover:bg-gray-700 text-left flex items-center justify-between transition-colors"
+                    >
+                      <span className="text-white font-medium text-sm">{module.title}</span>
+                      <svg
+                        className={`w-5 h-5 text-gray-400 transition-transform ${expandedModules.has(module.id) ? 'rotate-180' : ''}`}
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+                    
+                    {expandedModules.has(module.id) && module.lessons && (
+                      <div className="bg-gray-800">
+                        {module.lessons
+                          .sort((a, b) => a.order - b.order)
+                          .map((lesson) => (
+                            <button
+                              key={lesson.id}
+                              onClick={() => navigateToLesson(lesson.id)}
+                              className={`w-full px-4 py-2 text-left text-sm transition-colors ${lesson.id === lessonId ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'}`}
+                            >
+                              <div className="flex items-center gap-2">
+                                <span>{lesson.contentType === 'QUIZ' ? '📝' : lesson.contentType === 'PDF' ? '📄' : '🎥'}</span>
+                                <span className="truncate">{lesson.title}</span>
+                              </div>
+                            </button>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex-1 flex flex-col overflow-y-auto bg-gray-50">
+          <div className="bg-gray-800 border-b border-gray-700 px-6 py-4 sticky top-0 z-10">
+            <div className="flex items-center justify-between">
+              <h1 className="text-white text-xl font-semibold">{lessonData.title}</h1>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handlePrevious}
+                  disabled={!hasPrevious()}
+                  className={`px-4 py-2 rounded-lg transition-colors ${hasPrevious() ? 'bg-gray-700 hover:bg-gray-600 text-white' : 'bg-gray-700 text-gray-500 cursor-not-allowed'}`}
+                >
+                  &larr; Previous
+                </button>
+                <button
+                  onClick={handleNext}
+                  disabled={!hasNext()}
+                  className={`px-4 py-2 rounded-lg transition-colors ${hasNext() ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-gray-700 text-gray-500 cursor-not-allowed'}`}
+                >
+                  Next &rarr;
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex-1 py-8">
+            <QuizViewer
+              quizData={lessonData.quizData}
+              title={lessonData.title}
+              onComplete={(score, total) => {
+                console.log(`Quiz completed: ${score}/${total}`);
+              }}
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // VIDEO content
   const isYouTube = lessonData.videoType === 'YOUTUBE';
   const hasHLS = lessonData.hlsMasterPlaylist || (lessonData.hlsQualities && Object.keys(lessonData.hlsQualities).length > 0);
   const hasMP4 = lessonData.videoUrls && Object.keys(lessonData.videoUrls).length > 0;
@@ -461,7 +607,7 @@ export default function VideoPlayerPage() {
                               className={`w-full px-4 py-2 text-left text-sm transition-colors ${lesson.id === lessonId ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'}`}
                             >
                               <div className="flex items-center gap-2">
-                                <span>{lesson.contentType === 'PDF' ? '📄' : '🎥'}</span>
+                                <span>{lesson.contentType === 'QUIZ' ? '📝' : lesson.contentType === 'PDF' ? '📄' : '🎥'}</span>
                                 <span className="truncate">{lesson.title}</span>
                               </div>
                             </button>

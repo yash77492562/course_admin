@@ -14,6 +14,7 @@ import type {
 
 interface VideoUploaderWithProcessingProps {
   courseId?: string; // NEW: For upload lock
+  moduleId?: string; // NEW: For lesson creation in backend
   moduleName?: string; // NEW: For Redis display
   lessonId: string;
   lessonName: string;
@@ -30,6 +31,7 @@ interface VideoUploaderWithProcessingProps {
 
 export function VideoUploaderWithProcessing({
   courseId,
+  moduleId,
   moduleName,
   lessonId,
   lessonName,
@@ -193,6 +195,7 @@ export function VideoUploaderWithProcessing({
       setUploadProgress([]);
 
       console.log('🎬 Starting NEW video upload system with qualities:', selectedQualities);
+      console.log('📝 Module ID:', moduleId);
       info('Starting Upload', `Uploading ${selectedQualities.length} quality version(s)...`);
 
       // Use NEW upload system
@@ -254,42 +257,37 @@ export function VideoUploaderWithProcessing({
             console.log('   Master Playlist:', (status as any).masterPlaylistUrl);
             console.log('   Metadata:', videoMetadata);
             
-            // CRITICAL FIX: Check if we have video URLs
-            if (!status.videoUrls || Object.keys(status.videoUrls).length === 0) {
-              console.error('❌ CRITICAL: No video URLs in completion status!');
-              console.error('   This means fetchFinalVideoUrls did not return URLs');
-              console.error('   Status:', JSON.stringify(status, null, 2));
-              showError(
-                'Video URLs Missing',
-                'Video processed but URLs not found. Please try uploading again or contact support.'
+            // CRITICAL FIX: Only check for videoUrls if they're provided
+            // Redis progress might not have them, but fetchFinalVideoUrls will provide them
+            if (status.videoUrls && Object.keys(status.videoUrls).length > 0) {
+              console.log('📤 Calling onComplete with data...');
+              
+              success(
+                'Processing Complete!',
+                `Video processed successfully with ${Object.keys(status.videoUrls).length} quality version(s)`
               );
-              return;
+              
+              const dataToPass = {
+                videoUrls: status.videoUrls,
+                thumbnailUrl: status.thumbnailUrl,
+                masterPlaylistUrl: (status as any).masterPlaylistUrl,
+                metadata: videoMetadata || undefined,
+                videoType: 'UPLOAD' as const,
+              };
+              
+              console.log('📦 Data being passed to onComplete:', JSON.stringify(dataToPass, null, 2));
+              onComplete(dataToPass);
+            } else {
+              console.log('⏳ Waiting for fetchFinalVideoUrls to provide video URLs...');
             }
-            
-            console.log('📤 Calling onComplete with data...');
-            
-            success(
-              'Processing Complete!',
-              `Video processed successfully with ${Object.keys(status.videoUrls).length} quality version(s)`
-            );
-            
-            const dataToPass = {
-              videoUrls: status.videoUrls,
-              thumbnailUrl: status.thumbnailUrl,
-              masterPlaylistUrl: (status as any).masterPlaylistUrl, // Get from status
-              metadata: videoMetadata || undefined, // Convert null to undefined for type compatibility
-              videoType: 'UPLOAD' as const,
-            };
-            
-            console.log('📦 Data being passed to onComplete:', JSON.stringify(dataToPass, null, 2));
-            onComplete(dataToPass);
           } else if (status.status === 'error') {
             console.error('❌ Processing error:', status.error);
             showError('Processing Failed', status.error || 'An error occurred during processing');
           }
         },
         courseId, // Pass courseId for upload lock
-        moduleName // Pass moduleName for Redis display
+        moduleName, // Pass moduleName for Redis display
+        moduleId // NEW: Pass moduleId for lesson creation
       );
 
       console.log('✅ Upload initiated successfully');

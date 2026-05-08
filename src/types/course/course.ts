@@ -87,7 +87,7 @@ export interface Lesson {
   duration: string;
   
   // Content type
-  contentType?: 'VIDEO' | 'PDF';
+  contentType?: 'VIDEO' | 'PDF' | 'QUIZ';
   
   // Video fields
   videoUrl?: string;
@@ -107,10 +107,34 @@ export interface Lesson {
   pdfPassword?: string;
   isPasswordProtected?: boolean;
   
+  // Quiz fields
+  quizData?: QuizData;
+  
   order: number;
   moduleId: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface QuizData {
+  questions: QuizQuestion[];
+  passingScore?: number; // Percentage required to pass (e.g., 70)
+  timeLimit?: number; // Time limit in minutes (optional)
+  allowRetake?: boolean; // Allow multiple attempts
+}
+
+export interface QuizQuestion {
+  id: string;
+  question: string;
+  options: QuizOption[];
+  correctAnswer: string; // ID of the correct option
+  explanation?: string; // Explanation shown after answering
+  points?: number; // Points for this question (default: 1)
+}
+
+export interface QuizOption {
+  id: string;
+  text: string;
 }
 
 export interface CreateCourseData {

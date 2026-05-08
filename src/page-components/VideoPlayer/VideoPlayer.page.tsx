@@ -40,7 +40,7 @@ export function VideoPlayerPage({ videoId }: VideoPlayerPageProps) {
         const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3002';
         console.log('Fetching video data from backend for lesson:', videoId);
         
-        const response = await fetch(`${apiUrl}/courses/lessons/${videoId}`, {
+        const response = await fetch(`${apiUrl}/lessons/${videoId}`, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',

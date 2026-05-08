@@ -2,12 +2,14 @@
 
 import { useState } from 'react';
 import dynamic from 'next/dynamic';
+import { ObjectId } from 'bson';
 import { Course, CourseStatus, CourseLevel } from '@/types/course';
 import { Header } from '@/components/layout/Header';
 import { Input, Textarea, Alert } from '@/components/ui';
 import { useNotifications } from '@/contexts/NotificationContext';
 import { VideoUploaderWithProcessing } from '@/components/features/VideoUploader/VideoUploaderWithProcessing';
 import { PDFUploader } from '@/components/features/LectureUploader/PDFUploader';
+import { QuizCreator } from '@/components/features/QuizCreator/QuizCreator';
 import { UploadLockIndicator } from '@/components/features/UploadLockIndicator/UploadLockIndicator';
 import { useUploadStatus } from '@/hooks/useUploadStatus';
 import { VideoTitleModal } from '@/components/ui/Modal/Modal';
@@ -36,7 +38,7 @@ interface EditorModule {
 interface VideoItem {
   id: string;
   title: string;
-  contentType: 'VIDEO' | 'PDF'; // Content type
+  contentType: 'VIDEO' | 'PDF' | 'QUIZ'; // Content type
   videoUrl?: string;
   videoType?: 'UPLOAD' | 'YOUTUBE';
   description?: string;
@@ -51,6 +53,9 @@ interface VideoItem {
   pdfUrl?: string; // R2 URL for PDF
   pdfPassword?: string; // Password for protected PDFs
   isPasswordProtected?: boolean;
+  
+  // Quiz-specific fields
+  quizData?: import('@/types/course').QuizData;
 }
 
 interface EditorFaq {
@@ -81,43 +86,63 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
   const [outcomes, setOutcomes] = useState<string[]>(course?.outcomes || ['']);
 
   // Modules & Curriculum (matches ProgramOutcomeSection modules)
-  const convertToEditorModules = (): EditorModule[] => {
-    if (course?.modules && course.modules.length > 0) {
-      return course.modules.map(module => ({
-        id: module.id,
-        title: module.title,
-        items: module.lessons?.map(lesson => ({
-          id: lesson.id,
-          title: lesson.title,
-          contentType: (lesson.contentType as 'VIDEO' | 'PDF') || 'VIDEO',
-          videoUrl: lesson.videoUrl || '',
-          videoType: (lesson.videoType as 'UPLOAD' | 'YOUTUBE') || 'UPLOAD',
-          description: lesson.description || '',
-          // Load existing HLS data from database
-          _r2VideoUrls: lesson.hlsQualities as Record<string, string> | undefined,
-          _r2MasterPlaylist: lesson.hlsMasterPlaylist,
-          _r2Thumbnail: lesson.thumbnail,
-          _r2Metadata: lesson.originalWidth && lesson.originalHeight && lesson.videoDuration ? {
-            originalWidth: lesson.originalWidth,
-            originalHeight: lesson.originalHeight,
-            duration: lesson.videoDuration,
-          } : undefined,
-          // PDF fields
-          pdfUrl: lesson.pdfUrl,
-          pdfPassword: lesson.pdfPassword,
-          isPasswordProtected: lesson.isPasswordProtected || false
-        })) || [] // Empty array if no lessons - user will add manually
-      }));
+  const convertToEditorModules = (courseData: Course | undefined): EditorModule[] => {
+    if (!courseData) {
+      return [{
+        id: new ObjectId().toHexString(), // Generate valid MongoDB ObjectID
+        title: 'Module 1: Foundations',
+        items: []
+      }];
     }
+    
+    if (courseData.modules && courseData.modules.length > 0) {
+      return courseData.modules.map((module) => {
+        const items = module.lessons?.map((lesson) => {
+          return {
+            id: lesson.id,
+            title: lesson.title,
+            contentType: (lesson.contentType as 'VIDEO' | 'PDF' | 'QUIZ') || 'VIDEO',
+            videoUrl: lesson.videoUrl || '',
+            videoType: (lesson.videoType as 'UPLOAD' | 'YOUTUBE') || 'UPLOAD',
+            description: lesson.description || '',
+            // Load existing HLS data from database
+            _r2VideoUrls: lesson.hlsQualities as Record<string, string> | undefined,
+            _r2MasterPlaylist: lesson.hlsMasterPlaylist,
+            _r2Thumbnail: lesson.thumbnail,
+            _r2Metadata: lesson.originalWidth && lesson.originalHeight && lesson.videoDuration ? {
+              originalWidth: lesson.originalWidth,
+              originalHeight: lesson.originalHeight,
+              duration: lesson.videoDuration,
+            } : undefined,
+            // PDF fields
+            pdfUrl: lesson.pdfUrl,
+            pdfPassword: lesson.pdfPassword,
+            isPasswordProtected: lesson.isPasswordProtected || false,
+            // Quiz fields
+            quizData: lesson.quizData
+          };
+        }) || [];
+        
+        return {
+          id: module.id,
+          title: module.title,
+          items
+        };
+      });
+    }
+    
     return [{
-      id: '1',
+      id: new ObjectId().toHexString(), // Generate valid MongoDB ObjectID
       title: 'Module 1: Foundations',
-      items: [] // Start with empty items - user will add video/lecture manually
+      items: []
     }];
   };
 
-  const [modules, setModules] = useState<EditorModule[]>(convertToEditorModules());
-  const [openModules, setOpenModules] = useState<Set<string>>(new Set(['1'])); // First module open by default
+  const [modules, setModules] = useState<EditorModule[]>(() => convertToEditorModules(course));
+  const [openModules, setOpenModules] = useState<Set<string>>(() => {
+    const initialModules = convertToEditorModules(course);
+    return new Set([initialModules[0]?.id]); // First module open by default
+  });
 
   // FAQs (matches CareerSupportSection)
   const [faqs, setFaqs] = useState<EditorFaq[]>(
@@ -133,11 +158,20 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
   const [showPDFUploader, setShowPDFUploader] = useState<{ moduleIndex: number; itemIndex: number } | null>(null);
   const [showPDFViewer, setShowPDFViewer] = useState<{ pdfUrl: string; password?: string; title: string } | null>(null);
   const [showYouTubePreview, setShowYouTubePreview] = useState<{ videoUrl: string; title: string } | null>(null);
+  
+  // Quiz State
+  const [showQuizCreator, setShowQuizCreator] = useState<{ moduleIndex: number; itemIndex: number; editData?: import('@/types/course').QuizData; editTitle?: string } | null>(null);
 
   const handleSave = async (status: CourseStatus = currentStatus) => {
     try {
       console.log('=== SAVING COURSE ===');
       console.log('Current modules state:', modules);
+      
+      // Prevent duplicate saves
+      if (isLoading) {
+        console.warn('⚠️ Save already in progress, ignoring duplicate request');
+        return;
+      }
       
       // STEP 1: Upload videos to R2 FIRST (before creating course)
       const modulesWithUploadedVideos = [...modules];
@@ -157,7 +191,30 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
       // Update state with uploaded videos
       setModules(modulesWithUploadedVideos);
       
-      // STEP 2: Create course with real R2 URLs
+      // STEP 2: Deduplicate modules by title to prevent accidental duplicates
+      const uniqueModules = modulesWithUploadedVideos.reduce((acc, module) => {
+        // Check if we already have a module with this exact title
+        const existingIndex = acc.findIndex(m => m.title.trim() === module.title.trim());
+        if (existingIndex === -1) {
+          // New unique module
+          acc.push(module);
+        } else {
+          // Duplicate found - merge items
+          console.warn(`⚠️ Duplicate module detected: "${module.title}". Merging items.`);
+          acc[existingIndex].items = [...acc[existingIndex].items, ...module.items];
+        }
+        return acc;
+      }, [] as EditorModule[]);
+      
+      if (uniqueModules.length !== modulesWithUploadedVideos.length) {
+        warning(
+          'Duplicate Modules Detected',
+          `Found ${modulesWithUploadedVideos.length - uniqueModules.length} duplicate module(s). They have been merged automatically.`,
+          { duration: 5000 }
+        );
+      }
+      
+      // STEP 3: Create course with real R2 URLs
       const courseData = {
         title: heroData.headline,
         description: heroData.subheadline,
@@ -171,7 +228,8 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
         instructor: 'TBD',
         features: heroData.highlights.filter(h => h.trim()),
         outcomes: outcomes.filter(o => o.trim()),
-        modules: modulesWithUploadedVideos.map(module => ({
+        modules: uniqueModules.map(module => ({
+          id: module.id, // CRITICAL: Send module ID so backend uses it
           title: module.title,
           description: `Module covering: ${module.items.map(item => item.title).join(', ')}`,
           duration: '1 week',
@@ -206,6 +264,9 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
               pdfUrl: item.pdfUrl,
               pdfPassword: item.pdfPassword,
               isPasswordProtected: item.isPasswordProtected || false,
+              
+              // Quiz fields
+              quizData: item.quizData,
             };
             
             console.log('📤 Lesson payload being sent:', lessonPayload);
@@ -305,7 +366,8 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
   };
 
   const addModule = () => {
-    const newModuleId = Date.now().toString();
+    // Generate valid MongoDB ObjectID using bson library
+    const newModuleId = new ObjectId().toHexString();
     const newModule: EditorModule = {
       id: newModuleId,
       title: `Module ${modules.length + 1}: `,
@@ -472,6 +534,42 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
     success(
       'PDF Uploaded Successfully!',
       `Lecture "${data.title}" has been uploaded to R2. It will be saved to database when you publish the course.`,
+      { duration: 5000 }
+    );
+  };
+
+  // Quiz Handler - NEW: Handles quiz creation
+  const handleQuizComplete = (quizData: import('@/types/course').QuizData, title: string) => {
+    if (!showQuizCreator) return;
+
+    console.log('=== QUIZ CREATED ===');
+    console.log('Quiz Title:', title);
+    console.log('Questions:', quizData.questions.length);
+
+    const { moduleIndex, itemIndex } = showQuizCreator;
+    const updated = [...modules];
+
+    const quizItem: VideoItem = {
+      id: `quiz_${Date.now()}`,
+      title,
+      contentType: 'QUIZ',
+      quizData,
+    };
+
+    if (itemIndex >= updated[moduleIndex].items.length) {
+      updated[moduleIndex].items.push(quizItem);
+    } else {
+      updated[moduleIndex].items[itemIndex] = quizItem;
+    }
+
+    console.log('Updated modules after quiz creation:', updated);
+
+    setModules(updated);
+    setShowQuizCreator(null);
+
+    success(
+      'Quiz Created Successfully!',
+      `Quiz "${title}" has been created with ${quizData.questions.length} questions. It will be saved to database when you publish the course.`,
       { duration: 5000 }
     );
   };
@@ -1029,6 +1127,14 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
                             >
                               + Add Lecture
                             </button>
+                            <button 
+                              onClick={() => {
+                                setShowQuizCreator({ moduleIndex, itemIndex: module.items.length });
+                              }}
+                              className="bg-purple-500 hover:bg-purple-600 text-white px-2 py-1 rounded text-xs font-medium transition-colors"
+                            >
+                              + Add Quiz
+                            </button>
                           </div>
                         </div>
                         
@@ -1076,7 +1182,18 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
                         )}
                         
                         <ul style={{ listStyleType: 'disc', color: '#64748b' }}>
-                          {module.items.map((item, itemIndex) => (
+                          {module.items.map((item, itemIndex) => {
+                            // Debug logging
+                            if (item.contentType === 'QUIZ') {
+                              console.log('🔍 Quiz item:', {
+                                title: item.title,
+                                contentType: item.contentType,
+                                hasQuizData: !!item.quizData,
+                                quizData: item.quizData
+                              });
+                            }
+                            
+                            return (
                             <li key={itemIndex} style={{ 
                               color: '#64748b', 
                               lineHeight: '1.5', 
@@ -1086,8 +1203,38 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
                               alignItems: 'center',
                               gap: '8px'
                             }}>
-                              {/* PDF Content */}
-                              {item.contentType === 'PDF' && item.pdfUrl ? (
+                              {/* Quiz Content */}
+                              {item.contentType === 'QUIZ' ? (
+                                item.quizData ? (
+                                  <button
+                                    onClick={() => {
+                                      // Open quiz in video-player page - same as PDF and video
+                                      window.open(`/video-player/${item.id}`, '_blank');
+                                    }}
+                                    className="flex-1 text-left border-none p-0 bg-transparent hover:text-purple-600 transition-colors cursor-pointer"
+                                    style={{ color: '#64748b', fontSize: '0.9rem', lineHeight: '1.5' }}
+                                  >
+                                    📝 {item.title} ({item.quizData.questions.length} questions)
+                                  </button>
+                                ) : (
+                                  <button
+                                    onClick={() => {
+                                      // Create new quiz - open modal
+                                      setShowQuizCreator({ 
+                                        moduleIndex, 
+                                        itemIndex,
+                                        editTitle: item.title 
+                                      });
+                                    }}
+                                    className="flex-1 text-left border-none p-0 bg-transparent hover:text-purple-600 transition-colors cursor-pointer"
+                                    style={{ color: '#f59e0b', fontSize: '0.9rem', lineHeight: '1.5' }}
+                                  >
+                                    📝 {item.title} (Click to create quiz)
+                                  </button>
+                                )
+                              ) :
+                              /* PDF Content */
+                              item.contentType === 'PDF' && item.pdfUrl ? (
                                 <button
                                   onClick={() => {
                                     // Open PDF in video-player page - let it fetch from API
@@ -1100,7 +1247,11 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
                                 </button>
                               ) : 
                               /* Video Content */
-                              item.contentType === 'VIDEO' && item.videoUrl && !item.videoUrl.startsWith('temp://') ? (
+                              item.contentType === 'VIDEO' && (
+                                (item.videoUrl && !item.videoUrl.startsWith('temp://')) || 
+                                item._r2VideoUrls || 
+                                item._r2MasterPlaylist
+                              ) ? (
                                 <button
                                   onClick={() => {
                                     // Open in video-player page - let it fetch fresh proxy URLs from API
@@ -1129,7 +1280,7 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
                                 </button>
                               )}
                             </li>
-                          ))}
+                          )})}
                         </ul>
                       </div>
                     )}
@@ -1310,6 +1461,7 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
           <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
             <VideoUploaderWithProcessing
               courseId={course.id}
+              moduleId={modules[showVideoUploader.moduleIndex]?.id} // NEW: Pass moduleId for lesson creation
               moduleName={modules[showVideoUploader.moduleIndex]?.title || 'Unknown Module'}
               lessonId={`frontend_${Date.now()}`}
               lessonName={showVideoUploader.title}
@@ -1334,6 +1486,16 @@ export function CourseEditorPage({ course, onSave, onCancel, isLoading }: Course
             />
           </div>
         </div>
+      )}
+
+      {/* Quiz Creator Modal - NEW: Create/Edit Quiz */}
+      {showQuizCreator && (
+        <QuizCreator
+          onComplete={handleQuizComplete}
+          onCancel={() => setShowQuizCreator(null)}
+          initialData={showQuizCreator.editData}
+          initialTitle={showQuizCreator.editTitle}
+        />
       )}
 
       {/* PDF Viewer Modal - NEW: View PDF Lectures */}
